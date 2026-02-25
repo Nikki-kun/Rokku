@@ -1,5 +1,3 @@
-//! UI styles (Ferra theme)
-
 use iced::widget::container;
 use iced::{Color as IcedColor, Theme};
 
@@ -17,7 +15,6 @@ pub fn ferra_container(_theme: &Theme) -> container::Style {
     }
 }
 
-/// Drop zone style: dashed border, subtle background
 pub fn drop_zone_container(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(IcedColor::from_rgb8(
@@ -32,7 +29,6 @@ pub fn drop_zone_container(_theme: &Theme) -> container::Style {
     }
 }
 
-/// Modern chart card style
 pub fn chart_card_container(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(IcedColor::from_rgb8(
@@ -47,7 +43,6 @@ pub fn chart_card_container(_theme: &Theme) -> container::Style {
     }
 }
 
-/// Parameters panel style
 pub fn params_panel_container(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(IcedColor::from_rgb8(

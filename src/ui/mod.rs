@@ -1,5 +1,3 @@
-//! UI components and views
-
 mod styles;
 mod view;
 

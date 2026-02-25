@@ -1,5 +1,3 @@
-//! View components for the application
-
 use iced::{
     widget::{
         button, column, mouse_area, row, text, tooltip, Column, Container, Scrollable, Space,
@@ -13,7 +11,6 @@ use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
 use crate::data::{extract_param_series, extract_time_range, value_at_time};
 use crate::ui::{chart_card_container, drop_zone_container, ferra_container, ferra_text, params_panel_container};
 
-/// Builds the floating tooltip content (table with param values at cursor time)
 pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
     let Some(ref records) = app.records else {
         return text("").into();

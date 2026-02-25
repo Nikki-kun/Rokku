@@ -1,5 +1,3 @@
-//! Application state and logic
-
 use std::path::PathBuf;
 
 use iced::{event, window, Subscription, Task};
@@ -62,18 +60,20 @@ impl App {
 
     pub fn apply_parse_result(&mut self, path: PathBuf, result: Result<Vec<LogRecord>, String>) {
         self.is_loading = false;
-        match result {
+        match &result {
             Ok(records) => {
+                log::info!("Parsed {} records from {}", records.len(), path.display());
                 self.file_path = path.to_string_lossy().to_string();
-                self.parameters = extract_parameters(&records);
+                self.parameters = extract_parameters(records);
                 self.records = Some(records.clone());
                 self.load_error = None;
                 self.active_charts.clear();
-                let (min_ts, _) = extract_time_range(&records);
+                let (min_ts, _) = extract_time_range(records);
                 self.cursor_time = Some(min_ts);
             }
             Err(e) => {
-                self.load_error = Some(e);
+                log::error!("Parse failed: {}", e);
+                self.load_error = Some(e.clone());
                 self.records = None;
                 self.parameters = Vec::new();
                 self.active_charts.clear();
@@ -82,6 +82,7 @@ impl App {
     }
 
     pub fn start_parse(path: PathBuf) -> Task<Message> {
+        log::info!("Loading log file: {}", path.display());
         Task::perform(
             async move {
                 let path_clone = path.clone();
@@ -132,6 +133,7 @@ impl App {
             }
             Message::AddChart(param) => {
                 if !state.active_charts.contains(&param) {
+                    log::debug!("Added chart: {}", param);
                     state.active_charts.push(param);
                 }
                 Task::none()
@@ -139,8 +141,10 @@ impl App {
             Message::RemoveChart(idx) => {
                 if idx < state.active_charts.len() {
                     state.active_charts.remove(idx);
+                    Task::none()
+                } else {
+                    Task::none()
                 }
-                Task::none()
             }
             Message::SetCursorTime(t) => {
                 state.cursor_time = Some(t);

@@ -15,7 +15,7 @@ struct PacketHeader {
 }
 
 #[binread]
-#[br(little)] // FMT message
+#[br(little)]
 #[derive(Debug, Clone)]
 pub struct FmtPacket {
     pub type_id: u8,
@@ -115,7 +115,7 @@ fn parse_value(
     }
 }
 
-const BUF_SIZE: usize = 256 * 1024; // 256KB buffer for I/O
+const BUF_SIZE: usize = 256 * 1024;
 
 pub struct ArduReader {
     filename: String,

@@ -1,34 +1,29 @@
-//! Chart widget for displaying log data
-
 use plotters::prelude::*;
 use plotters::style::Color;
 use plotters_backend::DrawingBackend;
 use plotters_iced::Chart;
 
 use crate::app::Message;
+use crate::data::{downsample_series, MAX_CHART_POINTS};
 
-// Chart plot area: plotters margin 15, y_label 50, x_label 35 → plot from 65 to (width-15)
 pub const CHART_PLOT_LEFT: f32 = 65.0;
 pub const CHART_PLOT_RIGHT: f32 = 15.0;
 
-// Halloy Ferra palette for charts
 const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
 const FERRA_LABEL: RGBColor = RGBColor(0xab, 0x8a, 0x79);
 const CHART_COLORS: [RGBColor; 5] = [
-    RGBColor(0x5d, 0xc1, 0xc5), // cyan
-    RGBColor(0xf6, 0xb6, 0xc9), // pink
-    RGBColor(0xb1, 0xb6, 0x95), // green
-    RGBColor(0xff, 0xa0, 0x7a), // orange
-    RGBColor(0xd7, 0xbd, 0xe2), // purple
+    RGBColor(0x5d, 0xc1, 0xc5),
+    RGBColor(0xf6, 0xb6, 0xc9),
+    RGBColor(0xb1, 0xb6, 0x95),
+    RGBColor(0xff, 0xa0, 0x7a),
+    RGBColor(0xd7, 0xbd, 0xe2),
 ];
 
-/// Format axis value: compact, no trailing zeros
 pub fn format_axis_value(v: f64) -> String {
     let s = format!("{:.4}", v);
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Chart for displaying log data with Ferra styling
 pub struct LogChart {
     title: String,
     data: Vec<(f64, f64)>,
@@ -37,6 +32,7 @@ pub struct LogChart {
 
 impl LogChart {
     pub fn new(title: String, data: Vec<(f64, f64)>, color_idx: usize) -> Self {
+        let data = downsample_series(&data, MAX_CHART_POINTS);
         Self {
             title,
             data,
@@ -121,5 +117,18 @@ impl Chart<Message> for LogChart {
                 ShapeStyle::from(&line_color).stroke_width(2),
             ))
             .expect("draw line");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_axis_value() {
+        assert_eq!(format_axis_value(1.5), "1.5");
+        assert_eq!(format_axis_value(1.0), "1");
+        assert_eq!(format_axis_value(0.1234), "0.1234");
+        assert_eq!(format_axis_value(100.0), "100");
     }
 }

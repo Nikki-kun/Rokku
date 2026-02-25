@@ -3,20 +3,14 @@ use serde_json::Map;
 
 use super::reader::{ArduFrame, ArduReader};
 
-/// Parsed log record with timestamp, message type and field values.
 #[derive(Debug, Clone)]
 pub struct LogRecord {
-    /// Timestamp in nanoseconds
     pub timestamp_ns: u64,
-    /// Message type name (e.g. "GPS", "ATT", "IMU")
     pub message_type: String,
-    /// Raw type ID from the log format
     pub type_id: u8,
-    /// Field name -> value mapping
     pub fields: Map<String, serde_json::Value>,
 }
 
-/// Estimate record count from file size (avg ~50 bytes per message)
 fn estimate_capacity(filename: &str) -> usize {
     std::fs::metadata(filename)
         .ok()
@@ -24,8 +18,8 @@ fn estimate_capacity(filename: &str) -> usize {
         .unwrap_or(10_000)
 }
 
-/// Parse ArduPilot Dataflash log file into a vector of log records.
 pub fn parse_log(filename: &str) -> Result<Vec<LogRecord>> {
+    log::debug!("Parsing log file: {}", filename);
     let capacity = estimate_capacity(filename);
     let mut reader = ArduReader::new(filename);
     let mut records = Vec::with_capacity(capacity);
@@ -49,5 +43,17 @@ pub fn parse_log(filename: &str) -> Result<Vec<LogRecord>> {
         }
     }
 
+    log::debug!("Parsed {} records", records.len());
     Ok(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_log_nonexistent() {
+        let result = parse_log("/nonexistent/path/log.bin");
+        assert!(result.is_err());
+    }
 }
