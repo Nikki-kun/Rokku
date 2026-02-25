@@ -4,6 +4,13 @@ use crate::parser::LogRecord;
 
 pub const MAX_CHART_POINTS: usize = 250;
 
+/// Поля с временными метками — не показываем в выборе данных для графиков.
+const TIMESTAMP_FIELDS: &[&str] = &["TimeUS", "timestamp"];
+
+pub fn is_timestamp_field(field_name: &str) -> bool {
+    TIMESTAMP_FIELDS.contains(&field_name)
+}
+
 pub fn downsample_series(data: &[(f64, f64)], max_points: usize) -> Vec<(f64, f64)> {
     if data.len() <= max_points || data.len() < 3 {
         return data.to_vec();
@@ -104,7 +111,9 @@ pub fn extract_parameters(records: &[LogRecord]) -> Vec<String> {
     let mut params = BTreeSet::new();
     for r in records {
         for field_name in r.fields.keys() {
-            params.insert(format!("{}.{}", r.message_type, field_name));
+            if !is_timestamp_field(field_name) {
+                params.insert(format!("{}.{}", r.message_type, field_name));
+            }
         }
     }
     params
@@ -115,6 +124,37 @@ pub fn extract_parameters(records: &[LogRecord]) -> Vec<String> {
         .collect()
 }
 
+/// Группирует параметры по префиксу (MessageType). AETR.SS, AETR.Rudd → группа AETR.
+#[derive(Debug, Clone)]
+pub struct ParamGroup {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+pub fn extract_parameter_groups(records: &[LogRecord]) -> Vec<ParamGroup> {
+    let params = extract_parameters(records);
+    let mut groups: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for p in params {
+        if let Some((name, field)) = p.split_once('.') {
+            groups
+                .entry(name.to_string())
+                .or_default()
+                .push(field.to_string());
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(name, mut fields)| {
+            fields.sort();
+            fields.dedup();
+            ParamGroup { name, fields }
+        })
+        .collect()
+}
+
+/// Извлекает серию (время в мс, значение). Время — абсолютное (TimeUS/timestamp),
+/// может начинаться не с нуля (напр. с 12 с).
 pub fn extract_param_series(records: &[LogRecord], param: &str) -> Option<Vec<(f64, f64)>> {
     let mut parts = param.splitn(2, '.');
     let msg_type = parts.next()?;
@@ -131,8 +171,67 @@ pub fn extract_param_series(records: &[LogRecord], param: &str) -> Option<Vec<(f
     if points.is_empty() {
         None
     } else {
+        points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         Some(points)
     }
+}
+
+/// Добавляет точку (0, 0) в начало серии, если данные начинаются не с нуля.
+/// Используется только для отображения на графике.
+pub fn pad_series_from_zero(series: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    if let Some(&(first_ts, _)) = series.first() {
+        if first_ts > 0.0 {
+            let mut padded = vec![(0.0, 0.0)];
+            padded.extend(series);
+            padded
+        } else {
+            series.to_vec()
+        }
+    } else {
+        series.to_vec()
+    }
+}
+
+/// Проверяет, что количество временных меток совпадает с количеством значений,
+/// и логирует результат. Вызывается при добавлении графика.
+pub fn validate_param_series_and_log(records: &[LogRecord], param: &str) -> Option<Vec<(f64, f64)>> {
+    let mut parts = param.splitn(2, '.');
+    let msg_type = parts.next()?;
+    let _ = parts.next()?;
+
+    let n_records_with_ts: usize = records
+        .iter()
+        .filter(|r| r.message_type == msg_type)
+        .count();
+
+    let series = extract_param_series(records, param)?;
+    let n_points = series.len();
+
+    if let Some((first_ts_ms, _)) = series.first() {
+        log::info!(
+            "Param {}: first TimeUS/timestamp = {:.2} ms ({:.3} s)",
+            param,
+            first_ts_ms,
+            first_ts_ms / 1000.0
+        );
+    }
+
+    if n_points != n_records_with_ts {
+        log::error!(
+            "Param {}: mismatch - {} timestamps (TimeUS/timestamp) vs {} values",
+            param,
+            n_records_with_ts,
+            n_points
+        );
+    } else {
+        log::info!(
+            "Param {}: {} points, timestamps and values match",
+            param,
+            n_points
+        );
+    }
+
+    Some(series)
 }
 
 #[cfg(test)]
@@ -146,6 +245,19 @@ mod tests {
             message_type: msg_type.to_string(),
             type_id: 0,
             fields: [(field.to_string(), json!(value))].into_iter().collect(),
+        }
+    }
+
+    fn make_record_multi(
+        ts_ns: u64,
+        msg_type: &str,
+        fields: impl IntoIterator<Item = (String, serde_json::Value)>,
+    ) -> LogRecord {
+        LogRecord {
+            timestamp_ns: ts_ns,
+            message_type: msg_type.to_string(),
+            type_id: 0,
+            fields: fields.into_iter().collect(),
         }
     }
 
@@ -208,6 +320,71 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_parameters_excludes_timestamp_fields() {
+        let records = vec![
+            make_record_multi(
+                1_000_000,
+                "AETR",
+                [
+                    ("TimeUS".to_string(), json!(1_000_000)),
+                    ("SS".to_string(), json!(5.0)),
+                ],
+            ),
+            make_record_multi(
+                2_000_000,
+                "GPS",
+                [
+                    ("timestamp".to_string(), json!(2_000_000)),
+                    ("Lat".to_string(), json!(55.0)),
+                ],
+            ),
+        ];
+        let params = extract_parameters(&records);
+        assert!(!params.iter().any(|p| p.ends_with(".TimeUS")));
+        assert!(!params.iter().any(|p| p.ends_with(".timestamp")));
+        assert!(params.contains(&"AETR.SS".to_string()));
+        assert!(params.contains(&"GPS.Lat".to_string()));
+    }
+
+    #[test]
+    fn test_is_timestamp_field() {
+        assert!(is_timestamp_field("TimeUS"));
+        assert!(is_timestamp_field("timestamp"));
+        assert!(!is_timestamp_field("SS"));
+        assert!(!is_timestamp_field("Lat"));
+    }
+
+    #[test]
+    fn test_extract_parameter_groups() {
+        let records = vec![
+            make_record_multi(
+                1_000_000,
+                "AETR",
+                [
+                    ("TimeUS".to_string(), json!(1_000_000)),
+                    ("SS".to_string(), json!(5.0)),
+                    ("Rudd".to_string(), json!(10.0)),
+                ],
+            ),
+            make_record_multi(
+                2_000_000,
+                "GPS",
+                [
+                    ("timestamp".to_string(), json!(2_000_000)),
+                    ("Lat".to_string(), json!(55.0)),
+                    ("Lng".to_string(), json!(37.0)),
+                ],
+            ),
+        ];
+        let groups = extract_parameter_groups(&records);
+        assert_eq!(groups.len(), 2);
+        let aetr = groups.iter().find(|g| g.name == "AETR").unwrap();
+        assert_eq!(aetr.fields.len(), 2);
+        assert!(aetr.fields.contains(&"Rudd".to_string()));
+        assert!(aetr.fields.contains(&"SS".to_string()));
+    }
+
+    #[test]
     fn test_extract_param_series() {
         let records = vec![
             make_record(1_000_000, "A", "v", 10.0),
@@ -221,6 +398,35 @@ mod tests {
     }
 
     #[test]
+    fn test_pad_series_from_zero() {
+        let series = vec![(12_000.0, 1.0), (13_000.0, 2.0)];
+        let padded = pad_series_from_zero(&series);
+        assert_eq!(padded.len(), 3);
+        assert_eq!(padded[0], (0.0, 0.0));
+        assert_eq!(padded[1], (12_000.0, 1.0));
+        assert_eq!(padded[2], (13_000.0, 2.0));
+
+        let series_from_zero = vec![(0.0, 5.0), (1.0, 6.0)];
+        let not_padded = pad_series_from_zero(&series_from_zero);
+        assert_eq!(not_padded.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_param_series_non_zero_start() {
+        // TimeUS/timestamp могут начинаться не с нуля (напр. 12 с)
+        let records = vec![
+            make_record(12_000_000_000, "A", "v", 1.0),  // 12 s
+            make_record(13_000_000_000, "A", "v", 2.0),  // 13 s
+            make_record(14_000_000_000, "A", "v", 3.0),  // 14 s
+        ];
+        let series = extract_param_series(&records, "A.v").unwrap();
+        assert_eq!(series.len(), 3);
+        assert_eq!(series[0].0, 12_000.0); // 12 s в мс
+        assert_eq!(series[1].0, 13_000.0);
+        assert_eq!(series[2].0, 14_000.0);
+    }
+
+    #[test]
     fn test_value_at_time_interpolation() {
         let records = vec![
             make_record(1_000_000, "A", "v", 10.0),
@@ -229,5 +435,31 @@ mod tests {
         assert_eq!(value_at_time(&records, "A.v", 0.5), Some(10.0));
         assert_eq!(value_at_time(&records, "A.v", 2.0), Some(20.0));
         assert_eq!(value_at_time(&records, "A.v", 4.0), Some(30.0));
+    }
+
+    #[test]
+    fn test_validate_param_series_match() {
+        let _ = env_logger::try_init();
+        let records = vec![
+            make_record(1_000_000, "A", "v", 10.0),
+            make_record(2_000_000, "A", "v", 20.0),
+        ];
+        let result = validate_param_series_and_log(&records, "A.v");
+        assert_eq!(result.as_ref().map(|s| s.len()), Some(2));
+        assert_eq!(result.unwrap()[0], (1.0, 10.0));
+    }
+
+    #[test]
+    fn test_validate_param_series_mismatch() {
+        let _ = env_logger::try_init();
+        // 3 records of type A, but only 2 have field "v"
+        let records = vec![
+            make_record(1_000_000, "A", "v", 10.0),
+            make_record(2_000_000, "A", "x", 99.0), // no "v"
+            make_record(3_000_000, "A", "v", 30.0),
+        ];
+        let result = validate_param_series_and_log(&records, "A.v");
+        assert_eq!(result.as_ref().map(|s| s.len()), Some(2));
+        // 3 timestamps (records) vs 2 values (points with field v)
     }
 }

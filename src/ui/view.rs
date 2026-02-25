@@ -1,6 +1,7 @@
 use iced::{
     widget::{
-        button, column, mouse_area, row, text, tooltip, Column, Container, Scrollable, Space,
+        button, column, mouse_area, row, text, text_input, tooltip, Column, Container, Scrollable,
+        Space,
     },
     Alignment, Element, Length, Point,
 };
@@ -9,7 +10,9 @@ use plotters_iced::ChartWidget;
 
 use crate::app::{App, Message};
 use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
-use crate::data::{extract_param_series, extract_time_range, value_at_time};
+use crate::data::{
+    extract_param_series, extract_time_range, pad_series_from_zero, value_at_time,
+};
 use crate::ui::{chart_card_container, drop_zone_container, ferra_container, ferra_text, params_panel_container};
 
 pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
@@ -221,37 +224,82 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
         Space::with_height(16),
     ];
 
-    let params_list: Element<Message> = if app.parameters.is_empty() {
+    let params_list: Element<Message> = if app.parameter_groups.is_empty() {
         text("Параметры появятся после загрузки лога")
             .size(14)
             .style(|_| ferra_text((0xab, 0x8a, 0x79)))
             .into()
     } else {
+        let search_lower = app.param_search.to_lowercase();
         let mut list = Column::new().spacing(2).padding(4);
-        for p in &app.parameters {
-            let param = p.clone();
-            let can_add = !app.active_charts.contains(p);
+        for group in &app.parameter_groups {
+            let matches_search = search_lower.is_empty()
+                || group.name.to_lowercase().contains(&search_lower)
+                || group
+                    .fields
+                    .iter()
+                    .any(|f| f.to_lowercase().contains(&search_lower));
+            if !matches_search {
+                continue;
+            }
+            let group_name = group.name.clone();
+            let is_expanded = app.expanded_groups.contains(&group_name);
+            let expand_icon = if is_expanded {
+                Nerd::ChevronDown
+            } else {
+                Nerd::ChevronRight
+            };
             list = list.push(
                 row![
-                    button("+")
-                        .on_press_maybe(if can_add {
-                            Some(Message::AddChart(param.clone()))
-                        } else {
-                            None
-                        })
-                        .style(if can_add {
-                            button::primary
-                        } else {
-                            button::secondary
-                        })
-                        .padding([4, 8]),
-                    text(p.as_str())
-                        .size(12)
-                        .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+                    button(
+                        text(iced_fonts::nerd::icon_to_string(expand_icon))
+                            .font(NERD_FONT)
+                            .size(10),
+                    )
+                    .on_press(Message::ParamGroupToggled(group_name.clone()))
+                    .style(button::secondary)
+                    .padding([2, 4]),
+                    text(&group.name)
+                        .size(13)
+                        .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
                 ]
-                .spacing(8)
+                .spacing(4)
                 .align_y(Alignment::Center),
             );
+            if is_expanded {
+                for field in &group.fields {
+                    let param = format!("{}.{}", group.name, field);
+                    let matches_field_search = search_lower.is_empty()
+                        || param.to_lowercase().contains(&search_lower);
+                    if !matches_field_search {
+                        continue;
+                    }
+                    let can_add = !app.active_charts.contains(&param);
+                    let param_clone = param.clone();
+                    list = list.push(
+                        row![
+                            Space::with_width(20),
+                            button("+")
+                                .on_press_maybe(if can_add {
+                                    Some(Message::AddChart(param_clone))
+                                } else {
+                                    None
+                                })
+                                .style(if can_add {
+                                    button::primary
+                                } else {
+                                    button::secondary
+                                })
+                                .padding([4, 8]),
+                            text(param.clone())
+                                .size(12)
+                                .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    );
+                }
+            }
         }
         Scrollable::new(list)
             .height(Length::Fill)
@@ -271,19 +319,26 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             let mut charts_col = Column::new().spacing(16);
             for (idx, param) in app.active_charts.iter().enumerate() {
                 if let Some(data) = extract_param_series(records, param) {
-                    let chart_min_ts = data.first().map(|(t, _)| *t).unwrap_or(min_ts);
-                    let chart_max_ts = data.last().map(|(t, _)| *t).unwrap_or(max_ts);
+                    let chart_data = pad_series_from_zero(&data);
+                    let chart_min_ts = chart_data.first().map(|(t, _)| *t).unwrap_or(min_ts);
+                    let chart_max_ts = chart_data.last().map(|(t, _)| *t).unwrap_or(max_ts);
                     let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
-                    let chart = LogChart::new(param.clone(), data, idx);
+                    let chart = LogChart::new(param.clone(), chart_data, idx);
                     let i = idx;
-                    let plot_width = app.chart_width - CHART_PLOT_LEFT - CHART_PLOT_RIGHT;
+                    let plot_width = if let Some((_, w)) = app.chart_bounds {
+                        (w - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0)
+                    } else {
+                        let w = (app.chart_width - 104.0).max(100.0);
+                        w - CHART_PLOT_LEFT - CHART_PLOT_RIGHT
+                    };
                     let chart_with_cursor = mouse_area(
                         ChartWidget::new(chart)
                             .width(Length::Fill)
                             .height(Length::Fixed(300.0)),
                     )
                     .on_move(move |p: Point| {
-                        let frac = ((p.x - CHART_PLOT_LEFT) / plot_width).clamp(0.0, 1.0) as f64;
+                        let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
+                        let frac = (pos_in_plot / plot_width).min(1.0) as f64;
                         Message::SetCursorTime(chart_min_ts + frac * chart_time_range)
                     });
                     let chart_with_tooltip = tooltip(
@@ -353,6 +408,11 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                 text("+ добавить график")
                     .size(11)
                     .style(|_| ferra_text((0x68, 0x56, 0x50))),
+                Space::with_height(8),
+                text_input("Поиск...", &app.param_search)
+                    .on_input(Message::ParamSearchChanged)
+                    .padding(8)
+                    .size(12),
                 Space::with_height(8),
                 params_list,
             ]

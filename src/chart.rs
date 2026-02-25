@@ -6,7 +6,7 @@ use plotters_iced::Chart;
 use crate::app::Message;
 use crate::data::{downsample_series, MAX_CHART_POINTS};
 
-pub const CHART_PLOT_LEFT: f32 = 65.0;
+pub const CHART_PLOT_LEFT: f32 = 55.0;
 pub const CHART_PLOT_RIGHT: f32 = 15.0;
 
 const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
@@ -53,6 +53,7 @@ impl Chart<Message> for LogChart {
             return;
         }
 
+        // Время в мс (абсолютное, может начинаться не с 0 — напр. с 12 с)
         let (min_ts, max_ts): (f64, f64) = self
             .data
             .iter()

@@ -212,6 +212,7 @@ impl ArduReader {
                 };
 
                 let label = definition.labels[idx].clone();
+                // TimeUS — микросекунды, умножаем на 1000 для наносекунд
                 if label == "TimeUS" {
                     match &val {
                         LogValue::UInt(v) => current_ts = *v * 1000,

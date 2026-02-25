@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use iced::{event, window, Subscription, Task};
 
-use crate::data::{extract_parameters, extract_time_range};
+use crate::data::{
+    extract_parameter_groups, extract_parameters, extract_time_range,
+    validate_param_series_and_log, ParamGroup,
+};
 use crate::parser::{parse_log, LogRecord};
 use crate::ui::{charts_view, loading_view, welcome_view};
 
@@ -16,18 +19,25 @@ pub enum Message {
     RemoveChart(usize),
     SetCursorTime(f64),
     WindowResized((iced::window::Id, iced::Size)),
+    ParamSearchChanged(String),
+    ParamGroupToggled(String),
 }
 
 pub struct App {
     pub file_path: String,
     pub records: Option<Vec<LogRecord>>,
     pub parameters: Vec<String>,
+    pub parameter_groups: Vec<ParamGroup>,
+    pub expanded_groups: std::collections::HashSet<String>,
+    pub param_search: String,
     pub active_charts: Vec<String>,
     pub cursor_time: Option<f64>,
     pub load_error: Option<String>,
     pub is_loading: bool,
     pub chart_width: f32,
+    pub chart_bounds: Option<(f32, f32)>,
 }
+
 
 impl App {
     pub fn new() -> (Self, Task<Message>) {
@@ -36,11 +46,15 @@ impl App {
                 file_path: String::new(),
                 records: None,
                 parameters: Vec::new(),
+                parameter_groups: Vec::new(),
+                expanded_groups: std::collections::HashSet::new(),
+                param_search: String::new(),
                 active_charts: Vec::new(),
                 cursor_time: None,
                 load_error: None,
                 is_loading: false,
                 chart_width: 700.0,
+                chart_bounds: None,
             },
             Task::none(),
         )
@@ -65,17 +79,26 @@ impl App {
                 log::info!("Parsed {} records from {}", records.len(), path.display());
                 self.file_path = path.to_string_lossy().to_string();
                 self.parameters = extract_parameters(records);
+                self.parameter_groups = extract_parameter_groups(records);
                 self.records = Some(records.clone());
                 self.load_error = None;
                 self.active_charts.clear();
+                self.expanded_groups.clear();
                 let (min_ts, _) = extract_time_range(records);
                 self.cursor_time = Some(min_ts);
+                if self.chart_bounds.is_none() {
+                    let chart_left = 24.0 + 280.0 + 24.0 + 20.0 + 20.0 + 16.0;
+                    let chart_width =
+                        (self.chart_width - chart_left - 24.0 - 16.0 - 16.0).max(100.0);
+                    self.chart_bounds = Some((chart_left, chart_width));
+                }
             }
             Err(e) => {
                 log::error!("Parse failed: {}", e);
                 self.load_error = Some(e.clone());
                 self.records = None;
                 self.parameters = Vec::new();
+                self.parameter_groups = Vec::new();
                 self.active_charts.clear();
             }
         }
@@ -133,6 +156,9 @@ impl App {
             }
             Message::AddChart(param) => {
                 if !state.active_charts.contains(&param) {
+                    if let Some(ref records) = state.records {
+                        validate_param_series_and_log(records, &param);
+                    }
                     log::debug!("Added chart: {}", param);
                     state.active_charts.push(param);
                 }
@@ -152,6 +178,21 @@ impl App {
             }
             Message::WindowResized((_, size)) => {
                 state.chart_width = (size.width - 328.0).max(400.0);
+                let chart_left = 24.0 + 280.0 + 24.0 + 20.0 + 20.0 + 16.0;
+                let chart_width = (size.width - chart_left - 24.0 - 16.0 - 16.0).max(100.0);
+                state.chart_bounds = Some((chart_left, chart_width));
+                Task::none()
+            }
+            Message::ParamSearchChanged(s) => {
+                state.param_search = s;
+                Task::none()
+            }
+            Message::ParamGroupToggled(name) => {
+                if state.expanded_groups.contains(&name) {
+                    state.expanded_groups.remove(&name);
+                } else {
+                    state.expanded_groups.insert(name);
+                }
                 Task::none()
             }
         }
