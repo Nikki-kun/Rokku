@@ -107,7 +107,12 @@ pub fn extract_parameters(records: &[LogRecord]) -> Vec<String> {
             params.insert(format!("{}.{}", r.message_type, field_name));
         }
     }
-    params.into_iter().collect()
+    params
+        .into_iter()
+        .filter(|p| {
+            extract_param_series(records, p).map_or(false, |s| !s.is_empty())
+        })
+        .collect()
 }
 
 pub fn extract_param_series(records: &[LogRecord], param: &str) -> Option<Vec<(f64, f64)>> {
