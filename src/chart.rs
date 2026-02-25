@@ -25,16 +25,14 @@ pub fn format_axis_value(v: f64) -> String {
 }
 
 pub struct LogChart {
-    title: String,
     data: Vec<(f64, f64)>,
     color_idx: usize,
 }
 
 impl LogChart {
-    pub fn new(title: String, data: Vec<(f64, f64)>, color_idx: usize) -> Self {
+    pub fn new(_title: String, data: Vec<(f64, f64)>, color_idx: usize) -> Self {
         let data = downsample_series(&data, MAX_CHART_POINTS);
         Self {
-            title,
             data,
             color_idx: color_idx % CHART_COLORS.len(),
         }
@@ -74,10 +72,6 @@ impl Chart<Message> for LogChart {
         let val_range = (min_val - val_margin)..(max_val + val_margin);
 
         let mut chart = chart
-            .caption(
-                &self.title,
-                ("sans-serif", 14).into_font().color(&FERRA_LABEL),
-            )
             .x_label_area_size(35)
             .y_label_area_size(50)
             .margin(15)

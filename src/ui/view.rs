@@ -13,7 +13,10 @@ use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
 use crate::data::{
     extract_param_series, extract_time_range, pad_series_from_zero, value_at_time,
 };
-use crate::ui::{chart_card_container, drop_zone_container, ferra_container, ferra_text, params_panel_container};
+use crate::ui::{
+    chart_card_container, chart_remove_button, drop_zone_container, ferra_container, ferra_text,
+    param_add_button, param_add_disabled, param_icon_button, params_panel_container, FERRA_ACCENT,
+};
 
 pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
     let Some(ref records) = app.records else {
@@ -52,9 +55,9 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
 
     Container::new(
         column![
-            text(format!("{:.2}s", cursor / 1000.0))
+                text(format!("{:.2}s", cursor / 1000.0))
                 .size(11)
-                .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+                .style(|_| ferra_text(FERRA_ACCENT)),
             Space::with_height(4),
             rows,
         ]
@@ -62,36 +65,6 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
         .padding(10),
     )
     .style(ferra_container)
-    .into()
-}
-
-pub fn time_slider_and_table(app: &App) -> Element<'_, Message> {
-    let Some(ref records) = app.records else {
-        return text("").into();
-    };
-    let (min_ts, max_ts) = extract_time_range(records);
-    let max_ts = max_ts.max(min_ts + 1.0);
-    let cursor = app.cursor_time.unwrap_or(min_ts).clamp(min_ts, max_ts);
-
-    let time_display = row![
-        text("Время курсора:")
-            .size(12)
-            .style(|_| ferra_text((0xab, 0x8a, 0x79))),
-        text(format!("{:.2}s", cursor / 1000.0))
-            .size(12)
-            .style(|_| ferra_text((0xb1, 0xb6, 0x95))),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-
-    column![
-        time_display,
-        Space::with_height(4),
-        text("Наведите курсор на график — таблица с данными следует за курсором")
-            .size(11)
-            .style(|_| ferra_text((0x68, 0x56, 0x50))),
-    ]
-    .spacing(4)
     .into()
 }
 
@@ -140,7 +113,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
         Space::with_height(Length::FillPortion(2)),
         text("Rokku")
             .size(42)
-            .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+            .style(|_| ferra_text(FERRA_ACCENT)),
         text("Просмотрщик логов ArduPilot")
             .size(16)
             .style(|_| ferra_text((0xab, 0x8a, 0x79))),
@@ -172,7 +145,7 @@ pub fn loading_view() -> Element<'static, Message> {
         Space::with_height(Length::Fill),
         text("Rokku")
             .size(36)
-            .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+            .style(|_| ferra_text(FERRA_ACCENT)),
         Space::with_height(24),
         text("Загрузка и парсинг лога...")
             .size(16)
@@ -231,7 +204,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             .into()
     } else {
         let search_lower = app.param_search.to_lowercase();
-        let mut list = Column::new().spacing(2).padding(4);
+        let mut list = Column::new().spacing(1).padding(6);
         for group in &app.parameter_groups {
             let matches_search = search_lower.is_empty()
                 || group.name.to_lowercase().contains(&search_lower)
@@ -254,17 +227,18 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                     button(
                         text(iced_fonts::nerd::icon_to_string(expand_icon))
                             .font(NERD_FONT)
-                            .size(10),
+                            .size(12),
                     )
                     .on_press(Message::ParamGroupToggled(group_name.clone()))
-                    .style(button::secondary)
-                    .padding([2, 4]),
+                    .style(param_icon_button)
+                    .padding([4, 6]),
                     text(&group.name)
                         .size(13)
-                        .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+                        .style(|_| ferra_text(FERRA_ACCENT)),
                 ]
-                .spacing(4)
-                .align_y(Alignment::Center),
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .padding([2, 4]),
             );
             if is_expanded {
                 for field in &group.fields {
@@ -278,25 +252,30 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                     let param_clone = param.clone();
                     list = list.push(
                         row![
-                            Space::with_width(20),
-                            button("+")
-                                .on_press_maybe(if can_add {
-                                    Some(Message::AddChart(param_clone))
-                                } else {
-                                    None
-                                })
-                                .style(if can_add {
-                                    button::primary
-                                } else {
-                                    button::secondary
-                                })
-                                .padding([4, 8]),
+                            Space::with_width(24),
+                            button(
+                                text(iced_fonts::nerd::icon_to_string(Nerd::Plus))
+                                    .font(NERD_FONT)
+                                    .size(12),
+                            )
+                            .on_press_maybe(if can_add {
+                                Some(Message::AddChart(param_clone))
+                            } else {
+                                None
+                            })
+                            .style(if can_add {
+                                param_add_button
+                            } else {
+                                param_add_disabled
+                            })
+                            .padding([4, 6]),
                             text(param.clone())
                                 .size(12)
                                 .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
                         ]
                         .spacing(8)
-                        .align_y(Alignment::Center),
+                        .align_y(Alignment::Center)
+                        .padding([2, 4]),
                     );
                 }
             }
@@ -323,7 +302,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                     let chart_min_ts = chart_data.first().map(|(t, _)| *t).unwrap_or(min_ts);
                     let chart_max_ts = chart_data.last().map(|(t, _)| *t).unwrap_or(max_ts);
                     let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
-                    let chart = LogChart::new(param.clone(), chart_data, idx);
+                    let chart = LogChart::new(String::new(), chart_data, idx);
                     let i = idx;
                     let plot_width = if let Some((_, w)) = app.chart_bounds {
                         (w - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0)
@@ -355,11 +334,16 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                                 row![
                                     text(param.as_str())
                                         .size(15)
-                                        .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
-                                    button(text(iced_fonts::nerd::icon_to_string(Nerd::X)).font(NERD_FONT))
-                                        .on_press(Message::RemoveChart(i))
-                                        .style(button::danger)
-                                        .padding([6, 12]),
+                                        .style(|_| ferra_text(FERRA_ACCENT)),
+                                    Space::with_width(Length::Fill),
+                                    button(
+                                        text(iced_fonts::nerd::icon_to_string(Nerd::TrashCan))
+                                            .font(NERD_FONT)
+                                            .size(14),
+                                    )
+                                    .on_press(Message::RemoveChart(i))
+                                    .style(chart_remove_button)
+                                    .padding([6, 8]),
                                 ]
                                 .spacing(12)
                                 .align_y(Alignment::Center),
@@ -372,7 +356,18 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                     );
                 }
             }
-            Scrollable::new(charts_col).height(Length::Fill).into()
+            Scrollable::new(
+                Container::new(charts_col)
+                    .width(Length::Fill)
+                    .padding(iced::Padding {
+                        top: 0.0,
+                        right: 16.0,
+                        bottom: 0.0,
+                        left: 0.0,
+                    }),
+            )
+            .height(Length::Fill)
+            .into()
         }
     } else {
         text("Загрузите ArduPilot (.bin) или PX4 ULog (.ulg) для просмотра")
@@ -385,9 +380,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
         column![
             text(format!("Графики ({})", app.active_charts.len()))
                 .size(17)
-                .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
-            Space::with_height(12),
-            time_slider_and_table(app),
+                .style(|_| ferra_text(FERRA_ACCENT)),
             Space::with_height(12),
             charts_section,
         ]
@@ -404,15 +397,30 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             column![
                 text("Параметры")
                     .size(17)
-                    .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+                    .style(|_| ferra_text(FERRA_ACCENT)),
                 text("+ добавить график")
                     .size(11)
                     .style(|_| ferra_text((0x68, 0x56, 0x50))),
                 Space::with_height(8),
-                text_input("Поиск...", &app.param_search)
-                    .on_input(Message::ParamSearchChanged)
-                    .padding(8)
-                    .size(12),
+                row![
+                    text_input("Поиск...", &app.param_search)
+                        .on_input(Message::ParamSearchChanged)
+                        .padding(8)
+                        .size(12)
+                        .width(Length::Fill),
+                    if app.param_search.is_empty() {
+                        Element::from(Space::with_width(0))
+                    } else {
+                        button(text(iced_fonts::nerd::icon_to_string(Nerd::X)).font(NERD_FONT))
+                            .on_press(Message::ParamSearchChanged(String::new()))
+                            .style(button::secondary)
+                            .padding([6, 8])
+                            .into()
+                    },
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
                 Space::with_height(8),
                 params_list,
             ]
