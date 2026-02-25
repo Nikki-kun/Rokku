@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use iced::{event, window, Subscription, Task};
+use iced::{event, mouse, window, Subscription, Task};
 
 use crate::data::{ParamGroup, ParsedLog};
 use crate::parser::parse_log;
@@ -18,6 +19,7 @@ pub enum Message {
     WindowResized((iced::window::Id, iced::Size)),
     ParamSearchChanged(String),
     ParamGroupToggled(String),
+    ChartZoom(String, mouse::ScrollDelta),
 }
 
 pub struct App {
@@ -28,6 +30,7 @@ pub struct App {
     pub expanded_groups: std::collections::HashSet<String>,
     pub param_search: String,
     pub active_charts: Vec<String>,
+    pub chart_zoom: HashMap<String, (f64, f64)>,
     pub cursor_time: Option<f64>,
     pub load_error: Option<String>,
     pub is_loading: bool,
@@ -46,6 +49,7 @@ impl App {
                 expanded_groups: std::collections::HashSet::new(),
                 param_search: String::new(),
                 active_charts: Vec::new(),
+                chart_zoom: HashMap::new(),
                 cursor_time: None,
                 load_error: None,
                 is_loading: false,
@@ -80,6 +84,7 @@ impl App {
                 self.records = Some(records);
                 self.load_error = None;
                 self.active_charts.clear();
+                self.chart_zoom.clear();
                 self.expanded_groups.clear();
                 let (min_ts, _) = self.records.as_ref().unwrap().time_range();
                 self.cursor_time = Some(min_ts);
@@ -97,6 +102,7 @@ impl App {
                 self.parameters = Vec::new();
                 self.parameter_groups = Vec::new();
                 self.active_charts.clear();
+                self.chart_zoom.clear();
             }
         }
     }
@@ -163,7 +169,9 @@ impl App {
             }
             Message::RemoveChart(idx) => {
                 if idx < state.active_charts.len() {
+                    let param = state.active_charts[idx].clone();
                     state.active_charts.remove(idx);
+                    state.chart_zoom.remove(&param);
                     Task::none()
                 } else {
                     Task::none()
@@ -189,6 +197,53 @@ impl App {
                     state.expanded_groups.remove(&name);
                 } else {
                     state.expanded_groups.insert(name);
+                }
+                Task::none()
+            }
+            Message::ChartZoom(param, delta) => {
+                let delta_y = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y,
+                    mouse::ScrollDelta::Pixels { y, .. } => y,
+                };
+                if delta_y == 0.0 {
+                    return Task::none();
+                }
+                let Some(ref records) = state.records else {
+                    return Task::none();
+                };
+                let Some(data) = records.get_series(&param) else {
+                    return Task::none();
+                };
+                let (data_min, data_max) = data
+                    .iter()
+                    .map(|(t, _)| *t)
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| (a.min(t), b.max(t)));
+                let full_range = (data_max - data_min).max(0.001);
+                let pivot = state.cursor_time.unwrap_or(data_min).clamp(data_min, data_max);
+                let (v_start, v_end) = state.chart_zoom.get(&param).copied().unwrap_or((data_min, data_max));
+                let current_range = (v_end - v_start).max(0.001);
+                let zoom_factor = if delta_y > 0.0 { 1.0 / 1.15 } else { 1.15 };
+                let new_range = (current_range * zoom_factor).clamp(full_range * 0.01, full_range);
+                let half = new_range / 2.0;
+                let mut new_start = pivot - half;
+                let mut new_end = pivot + half;
+                if new_end - new_start > full_range {
+                    new_start = data_min;
+                    new_end = data_max;
+                } else {
+                    if new_start < data_min {
+                        new_start = data_min;
+                        new_end = (data_min + new_range).min(data_max);
+                    }
+                    if new_end > data_max {
+                        new_end = data_max;
+                        new_start = (data_max - new_range).max(data_min);
+                    }
+                }
+                if (new_end - new_start) >= full_range * 0.99 {
+                    state.chart_zoom.remove(&param);
+                } else {
+                    state.chart_zoom.insert(param, (new_start, new_end));
                 }
                 Task::none()
             }

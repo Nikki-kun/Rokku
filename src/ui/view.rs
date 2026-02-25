@@ -297,9 +297,16 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                         let chart_data = pad_series_from_zero(&data);
                         let chart_min_ts = chart_data.first().map(|(t, _)| *t).unwrap_or(min_ts);
                         let chart_max_ts = chart_data.last().map(|(t, _)| *t).unwrap_or(max_ts);
-                        let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
-                        let chart =
-                            LogChart::with_cursor(String::new(), chart_data, idx, app.cursor_time);
+                        let _chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
+                        let zoom_range = app.chart_zoom.get(param).copied();
+                        let chart = LogChart::with_cursor(
+                            String::new(),
+                            chart_data,
+                            idx,
+                            app.cursor_time,
+                            zoom_range,
+                        );
+                        let param_clone = param.clone();
                         let i = idx;
                         let chart_widget_width = if let Some((_, w)) = app.chart_bounds {
                             (w + 12.0).max(1.0)
@@ -308,6 +315,8 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                         };
                         let plot_width =
                             (chart_widget_width - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0);
+                        let (zoom_start, zoom_end) = zoom_range.unwrap_or((chart_min_ts, chart_max_ts));
+                        let zoomed_time_range = (zoom_end - zoom_start).max(0.001);
                         let chart_with_cursor = mouse_area(
                             ChartWidget::new(chart)
                                 .width(Length::Fill)
@@ -316,8 +325,9 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                         .on_move(move |p: Point| {
                             let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
                             let frac = (pos_in_plot / plot_width).min(1.0) as f64;
-                            Message::SetCursorTime(chart_min_ts + frac * chart_time_range)
-                        });
+                            Message::SetCursorTime(zoom_start + frac * zoomed_time_range)
+                        })
+                        .on_scroll(move |delta| Message::ChartZoom(param_clone.clone(), delta));
                         let chart_with_tooltip = tooltip(
                             chart_with_cursor,
                             cursor_tooltip_content(app),

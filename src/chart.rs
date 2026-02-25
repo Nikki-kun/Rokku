@@ -5,7 +5,7 @@ use plotters_backend::DrawingBackend;
 use plotters_iced::Chart;
 
 use crate::app::Message;
-use crate::data::{downsample_series, MAX_CHART_POINTS};
+use crate::data::{downsample_series, filter_series_to_range, MAX_CHART_POINTS};
 
 pub const CHART_PLOT_LEFT: f32 = 65.0;
 pub const CHART_PLOT_RIGHT: f32 = 50.0;
@@ -31,6 +31,7 @@ pub struct LogChart {
     data: Vec<(f64, f64)>,
     color_idx: usize,
     cursor_time: Option<f64>,
+    x_range: Option<(f64, f64)>,
 }
 
 impl LogChart {
@@ -39,12 +40,20 @@ impl LogChart {
         data: Vec<(f64, f64)>,
         color_idx: usize,
         cursor_time: Option<f64>,
+        x_range: Option<(f64, f64)>,
     ) -> Self {
-        let data = downsample_series(&data, MAX_CHART_POINTS);
+        let data = match x_range {
+            Some((range_start, range_end)) => {
+                let filtered = filter_series_to_range(&data, range_start, range_end);
+                downsample_series(&filtered, MAX_CHART_POINTS)
+            }
+            None => downsample_series(&data, MAX_CHART_POINTS),
+        };
         Self {
             data,
             color_idx: color_idx % CHART_COLORS.len(),
             cursor_time,
+            x_range,
         }
     }
 }
@@ -61,13 +70,16 @@ impl Chart<Message> for LogChart {
             return;
         }
 
-        let (min_ts, max_ts): (f64, f64) = self
+        let (data_min_ts, data_max_ts): (f64, f64) = self
             .data
             .iter()
             .map(|(t, _)| *t)
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
                 (a.min(t), b.max(t))
             });
+        let (min_ts, max_ts) = self
+            .x_range
+            .unwrap_or((data_min_ts, data_max_ts));
 
         let (min_val, max_val): (f64, f64) = self
             .data

@@ -84,6 +84,24 @@ pub fn is_timestamp_field(field_name: &str) -> bool {
     TIMESTAMP_FIELDS.contains(&field_name)
 }
 
+pub fn filter_series_to_range(
+    data: &[(f64, f64)],
+    range_start: f64,
+    range_end: f64,
+) -> Vec<(f64, f64)> {
+    if data.is_empty() {
+        return vec![];
+    }
+    let start_idx = data.partition_point(|(t, _)| *t < range_start);
+    let end_idx = data.partition_point(|(t, _)| *t <= range_end);
+    let start_idx = start_idx.saturating_sub(1);
+    let end_idx = end_idx.min(data.len().saturating_sub(1));
+    if start_idx > end_idx {
+        return vec![];
+    }
+    data[start_idx..=end_idx].to_vec()
+}
+
 pub fn downsample_series(data: &[(f64, f64)], max_points: usize) -> Vec<(f64, f64)> {
     if data.len() <= max_points || data.len() < 3 {
         return data.to_vec();
