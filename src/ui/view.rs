@@ -99,7 +99,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
                     .size(48)
                     .style(|_| ferra_text((0x5d, 0xc1, 0xc5))),
                 Space::with_height(12),
-                text("Перетащите .bin файл сюда")
+                text("Перетащите .bin или .ulg файл сюда")
                     .size(16)
                     .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
                 text("или нажмите для выбора из проводника")
@@ -267,14 +267,14 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
         } else {
             let (min_ts, max_ts) = extract_time_range(records);
             let max_ts = max_ts.max(min_ts + 1.0);
-            let time_range = max_ts - min_ts;
             let mut charts_col = Column::new().spacing(16);
             for (idx, param) in app.active_charts.iter().enumerate() {
                 if let Some(data) = extract_param_series(records, param) {
+                    let chart_min_ts = data.first().map(|(t, _)| *t).unwrap_or(min_ts);
+                    let chart_max_ts = data.last().map(|(t, _)| *t).unwrap_or(max_ts);
+                    let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
                     let chart = LogChart::new(param.clone(), data, idx);
                     let i = idx;
-                    let min_ts = min_ts;
-                    let time_range = time_range;
                     let plot_width = app.chart_width - CHART_PLOT_LEFT - CHART_PLOT_RIGHT;
                     let chart_with_cursor = mouse_area(
                         ChartWidget::new(chart)
@@ -282,8 +282,8 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                             .height(Length::Fixed(300.0)),
                     )
                     .on_move(move |p: Point| {
-                        let frac = ((p.x - CHART_PLOT_LEFT) / plot_width).clamp(0.0, 1.0);
-                        Message::SetCursorTime(min_ts + frac as f64 * time_range)
+                        let frac = ((p.x - CHART_PLOT_LEFT) / plot_width).clamp(0.0, 1.0) as f64;
+                        Message::SetCursorTime(chart_min_ts + frac * chart_time_range)
                     });
                     let chart_with_tooltip = tooltip(
                         chart_with_cursor,
@@ -319,7 +319,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             Scrollable::new(charts_col).height(Length::Fill).into()
         }
     } else {
-        text("Загрузите ArduPilot Dataflash лог (.bin) для просмотра")
+        text("Загрузите ArduPilot (.bin) или PX4 ULog (.ulg) для просмотра")
             .size(16)
             .style(|_| ferra_text((0xab, 0x8a, 0x79)))
             .into()

@@ -108,7 +108,7 @@ impl App {
                 async {
                     tokio::task::spawn_blocking(|| {
                         rfd::FileDialog::new()
-                            .add_filter("ArduPilot log", &["bin"])
+                            .add_filter("ArduPilot / PX4 logs", &["bin", "ulg"])
                             .set_title("Выберите файл лога")
                             .pick_file()
                     })

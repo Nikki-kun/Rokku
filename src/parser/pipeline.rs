@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde_json::Map;
 
 use super::reader::{ArduFrame, ArduReader};
+use super::ulog;
 
 #[derive(Debug, Clone)]
 pub struct LogRecord {
@@ -9,6 +10,13 @@ pub struct LogRecord {
     pub message_type: String,
     pub type_id: u8,
     pub fields: Map<String, serde_json::Value>,
+}
+
+fn is_ulog_file(filename: &str) -> bool {
+    std::path::Path::new(filename)
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("ulg"))
+        .unwrap_or(false)
 }
 
 fn estimate_capacity(filename: &str) -> usize {
@@ -19,6 +27,9 @@ fn estimate_capacity(filename: &str) -> usize {
 }
 
 pub fn parse_log(filename: &str) -> Result<Vec<LogRecord>> {
+    if is_ulog_file(filename) {
+        return ulog::parse_ulog(filename);
+    }
     log::debug!("Parsing log file: {}", filename);
     let capacity = estimate_capacity(filename);
     let mut reader = ArduReader::new(filename);
