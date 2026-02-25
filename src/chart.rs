@@ -1,0 +1,125 @@
+//! Chart widget for displaying log data
+
+use plotters::prelude::*;
+use plotters::style::Color;
+use plotters_backend::DrawingBackend;
+use plotters_iced::Chart;
+
+use crate::app::Message;
+
+// Chart plot area: plotters margin 15, y_label 50, x_label 35 → plot from 65 to (width-15)
+pub const CHART_PLOT_LEFT: f32 = 65.0;
+pub const CHART_PLOT_RIGHT: f32 = 15.0;
+
+// Halloy Ferra palette for charts
+const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
+const FERRA_LABEL: RGBColor = RGBColor(0xab, 0x8a, 0x79);
+const CHART_COLORS: [RGBColor; 5] = [
+    RGBColor(0x5d, 0xc1, 0xc5), // cyan
+    RGBColor(0xf6, 0xb6, 0xc9), // pink
+    RGBColor(0xb1, 0xb6, 0x95), // green
+    RGBColor(0xff, 0xa0, 0x7a), // orange
+    RGBColor(0xd7, 0xbd, 0xe2), // purple
+];
+
+/// Format axis value: compact, no trailing zeros
+pub fn format_axis_value(v: f64) -> String {
+    let s = format!("{:.4}", v);
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// Chart for displaying log data with Ferra styling
+pub struct LogChart {
+    title: String,
+    data: Vec<(f64, f64)>,
+    color_idx: usize,
+}
+
+impl LogChart {
+    pub fn new(title: String, data: Vec<(f64, f64)>, color_idx: usize) -> Self {
+        Self {
+            title,
+            data,
+            color_idx: color_idx % CHART_COLORS.len(),
+        }
+    }
+}
+
+impl Chart<Message> for LogChart {
+    type State = ();
+
+    fn build_chart<DB: DrawingBackend>(
+        &self,
+        _state: &Self::State,
+        mut chart: plotters_iced::ChartBuilder<DB>,
+    ) {
+        if self.data.is_empty() {
+            return;
+        }
+
+        let (min_ts, max_ts): (f64, f64) = self
+            .data
+            .iter()
+            .map(|(t, _)| *t)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
+                (a.min(t), b.max(t))
+            });
+
+        let (min_val, max_val): (f64, f64) = self
+            .data
+            .iter()
+            .map(|(_, v)| *v)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| {
+                (a.min(v), b.max(v))
+            });
+
+        let val_margin = (max_val - min_val).abs().max(1.0) * 0.08;
+        let val_range = (min_val - val_margin)..(max_val + val_margin);
+
+        let mut chart = chart
+            .caption(
+                &self.title,
+                ("sans-serif", 14).into_font().color(&FERRA_LABEL),
+            )
+            .x_label_area_size(35)
+            .y_label_area_size(50)
+            .margin(15)
+            .build_cartesian_2d(min_ts..max_ts, val_range)
+            .expect("build chart");
+
+        let label_style = ("sans-serif", 11).into_font().color(&FERRA_LABEL);
+        chart
+            .configure_mesh()
+            .light_line_style(FERRA_GRID.mix(0.15))
+            .bold_line_style(FERRA_GRID.mix(0.35))
+            .axis_style(ShapeStyle::from(&FERRA_LABEL.mix(0.8)).stroke_width(1))
+            .label_style(label_style)
+            .x_label_formatter(&|v| format!("{:.1}s", v / 1000.0))
+            .y_label_formatter(&|v| format_axis_value(*v))
+            .x_labels(8)
+            .y_labels(6)
+            .draw()
+            .expect("draw mesh");
+
+        let line_color = CHART_COLORS[self.color_idx];
+        let fill_color = line_color.mix(0.12);
+
+        chart
+            .draw_series(
+                AreaSeries::new(
+                    self.data.iter().map(|(x, y)| (*x, *y)),
+                    min_val - val_margin,
+                    fill_color,
+                )
+                .border_style(ShapeStyle::from(&line_color).stroke_width(2)),
+            )
+            .expect("draw area");
+
+        chart
+            .draw_series(LineSeries::new(
+                self.data.iter().copied(),
+                ShapeStyle::from(&line_color).stroke_width(2),
+            ))
+            .expect("draw line");
+    }
+}
