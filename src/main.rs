@@ -6,7 +6,7 @@ mod parser;
 use iced::{
     event, window,
     widget::{
-        button, column, mouse_area, row, text, Column, Container, Scrollable, Space,
+        button, column, mouse_area, row, text, tooltip, Column, Container, Scrollable, Space,
     },
     Alignment, Color as IcedColor, Element, Length, Point, Subscription, Task, Theme,
 };
@@ -96,6 +96,54 @@ fn ferra_text(color: (u8, u8, u8)) -> iced::widget::text::Style {
     }
 }
 
+/// Builds the floating tooltip content (table with param values at cursor time)
+fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
+    let Some(ref records) = app.records else {
+        return text("").into();
+    };
+    let (min_ts, max_ts) = extract_time_range(records);
+    let max_ts = max_ts.max(min_ts + 1.0);
+    let cursor = app.cursor_time.unwrap_or(min_ts).clamp(min_ts, max_ts);
+
+    if app.active_charts.is_empty() {
+        return text("Добавьте графики").size(11).style(|_| ferra_text((0x68, 0x56, 0x50))).into();
+    }
+
+    let mut rows = Column::new().spacing(3);
+    for param in &app.active_charts {
+        let val_str = value_at_time(records, param, cursor)
+            .map(|v| format!("{:.4}", v))
+            .unwrap_or_else(|| "—".to_string());
+        rows = rows.push(
+            row![
+                text(param.as_str())
+                    .size(11)
+                    .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+                Space::with_width(12),
+                text(val_str)
+                    .size(11)
+                    .style(|_| ferra_text((0xb1, 0xb6, 0x95))),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+
+    Container::new(
+        column![
+            text(format!("{:.2}s", cursor / 1000.0))
+                .size(11)
+                .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+            Space::with_height(4),
+            rows,
+        ]
+        .spacing(2)
+        .padding(10),
+    )
+    .style(ferra_container)
+    .into()
+}
+
 fn time_slider_and_table(app: &App) -> Element<'_, Message> {
     let Some(ref records) = app.records else {
         return text("").into();
@@ -115,57 +163,12 @@ fn time_slider_and_table(app: &App) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let table_content: Element<Message> = if app.active_charts.is_empty() {
-        text("Добавьте графики для отображения значений")
-            .size(12)
-            .style(|_| ferra_text((0x68, 0x56, 0x50)))
-            .into()
-    } else {
-        let mut rows = Column::new().spacing(4);
-        for param in &app.active_charts {
-            let val_str = value_at_time(records, param, cursor)
-                .map(|v| format!("{:.4}", v))
-                .unwrap_or_else(|| "—".to_string());
-            rows = rows.push(
-                row![
-                    text(param.as_str())
-                        .size(12)
-                        .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
-                    Space::with_width(20),
-                    text(val_str)
-                        .size(12)
-                        .style(|_| ferra_text((0xb1, 0xb6, 0x95))),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            );
-        }
-        Container::new(
-            column![
-                row![
-                    text("Параметр").size(11).style(|_| ferra_text((0x68, 0x56, 0x50))),
-                    Space::with_width(20),
-                    text("Значение").size(11).style(|_| ferra_text((0x68, 0x56, 0x50))),
-                ]
-                .spacing(8),
-                Space::with_height(4),
-                rows,
-            ]
-            .spacing(2)
-            .padding(8),
-        )
-        .style(ferra_container)
-        .into()
-    };
-
     column![
         time_display,
-        Space::with_height(8),
-        text("Значения в точке времени (наведите курсор на график)")
-            .size(12)
-            .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
         Space::with_height(4),
-        table_content,
+        text("Наведите курсор на график — таблица с данными следует за курсором")
+            .size(11)
+            .style(|_| ferra_text((0x68, 0x56, 0x50))),
     ]
     .spacing(4)
     .into()
@@ -534,6 +537,14 @@ impl App {
                             let frac = ((p.x - CHART_PLOT_LEFT) / plot_width).clamp(0.0, 1.0);
                             Message::SetCursorTime(min_ts + frac as f64 * time_range)
                         });
+                        let chart_with_tooltip = tooltip(
+                            chart_with_cursor,
+                            cursor_tooltip_content(self),
+                            iced::widget::tooltip::Position::FollowCursor,
+                        )
+                        .gap(8)
+                        .padding(6)
+                        .snap_within_viewport(true);
                         charts_col = charts_col.push(
                             Container::new(
                                 column![
@@ -548,7 +559,7 @@ impl App {
                                     ]
                                     .spacing(12)
                                     .align_y(Alignment::Center),
-                                    chart_with_cursor,
+                                    chart_with_tooltip,
                                 ]
                                 .spacing(12)
                                 .padding(16),
