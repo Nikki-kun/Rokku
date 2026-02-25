@@ -38,7 +38,6 @@ pub struct App {
     pub chart_bounds: Option<(f32, f32)>,
 }
 
-
 impl App {
     pub fn new() -> (Self, Task<Message>) {
         (

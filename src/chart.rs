@@ -1,3 +1,4 @@
+use plotters::element::DashedPathElement;
 use plotters::prelude::*;
 use plotters::style::Color;
 use plotters_backend::DrawingBackend;
@@ -6,8 +7,8 @@ use plotters_iced::Chart;
 use crate::app::Message;
 use crate::data::{downsample_series, MAX_CHART_POINTS};
 
-pub const CHART_PLOT_LEFT: f32 = 55.0;
-pub const CHART_PLOT_RIGHT: f32 = 15.0;
+pub const CHART_PLOT_LEFT: f32 = 65.0;
+pub const CHART_PLOT_RIGHT: f32 = 50.0;
 
 const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
 const FERRA_LABEL: RGBColor = RGBColor(0xab, 0x8a, 0x79);
@@ -24,17 +25,26 @@ pub fn format_axis_value(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
+const CURSOR_LINE_COLOR: RGBColor = RGBColor(0xe8, 0xdc, 0xa8);
+
 pub struct LogChart {
     data: Vec<(f64, f64)>,
     color_idx: usize,
+    cursor_time: Option<f64>,
 }
 
 impl LogChart {
-    pub fn new(_title: String, data: Vec<(f64, f64)>, color_idx: usize) -> Self {
+    pub fn with_cursor(
+        _title: String,
+        data: Vec<(f64, f64)>,
+        color_idx: usize,
+        cursor_time: Option<f64>,
+    ) -> Self {
         let data = downsample_series(&data, MAX_CHART_POINTS);
         Self {
             data,
             color_idx: color_idx % CHART_COLORS.len(),
+            cursor_time,
         }
     }
 }
@@ -51,7 +61,6 @@ impl Chart<Message> for LogChart {
             return;
         }
 
-        // Время в мс (абсолютное, может начинаться не с 0 — напр. с 12 с)
         let (min_ts, max_ts): (f64, f64) = self
             .data
             .iter()
@@ -112,6 +121,21 @@ impl Chart<Message> for LogChart {
                 ShapeStyle::from(&line_color).stroke_width(2),
             ))
             .expect("draw line");
+
+        if let Some(ct) = self.cursor_time {
+            if ct >= min_ts && ct <= max_ts {
+                let y_min = min_val - val_margin;
+                let y_max = max_val + val_margin;
+                chart
+                    .draw_series(std::iter::once(DashedPathElement::new(
+                        vec![(ct, y_min), (ct, y_max)],
+                        4,
+                        4,
+                        ShapeStyle::from(&CURSOR_LINE_COLOR).stroke_width(1),
+                    )))
+                    .expect("draw cursor line");
+            }
+        }
     }
 }
 

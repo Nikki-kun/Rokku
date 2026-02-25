@@ -5,14 +5,12 @@ use iced::{
     },
     Alignment, Element, Length, Point,
 };
-use iced_fonts::{nerd::Nerd, nerd::to_text, NERD_FONT};
+use iced_fonts::{nerd::to_text, nerd::Nerd, NERD_FONT};
 use plotters_iced::ChartWidget;
 
 use crate::app::{App, Message};
 use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
-use crate::data::{
-    extract_param_series, extract_time_range, pad_series_from_zero, value_at_time,
-};
+use crate::data::{extract_param_series, extract_time_range, pad_series_from_zero, value_at_time};
 use crate::ui::{
     chart_card_container, chart_remove_button, drop_zone_container, ferra_container, ferra_text,
     param_add_button, param_add_disabled, param_icon_button, params_panel_container, FERRA_ACCENT,
@@ -55,7 +53,7 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
 
     Container::new(
         column![
-                text(format!("{:.2}s", cursor / 1000.0))
+            text(format!("{:.2}s", cursor / 1000.0))
                 .size(11)
                 .style(|_| ferra_text(FERRA_ACCENT)),
             Space::with_height(4),
@@ -111,9 +109,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
 
     let welcome_content = column![
         Space::with_height(Length::FillPortion(2)),
-        text("Rokku")
-            .size(42)
-            .style(|_| ferra_text(FERRA_ACCENT)),
+        text("Rokku").size(42).style(|_| ferra_text(FERRA_ACCENT)),
         text("Просмотрщик логов ArduPilot")
             .size(16)
             .style(|_| ferra_text((0xab, 0x8a, 0x79))),
@@ -143,9 +139,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
 pub fn loading_view() -> Element<'static, Message> {
     let content = column![
         Space::with_height(Length::Fill),
-        text("Rokku")
-            .size(36)
-            .style(|_| ferra_text(FERRA_ACCENT)),
+        text("Rokku").size(36).style(|_| ferra_text(FERRA_ACCENT)),
         Space::with_height(24),
         text("Загрузка и парсинг лога...")
             .size(16)
@@ -243,8 +237,8 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             if is_expanded {
                 for field in &group.fields {
                     let param = format!("{}.{}", group.name, field);
-                    let matches_field_search = search_lower.is_empty()
-                        || param.to_lowercase().contains(&search_lower);
+                    let matches_field_search =
+                        search_lower.is_empty() || param.to_lowercase().contains(&search_lower);
                     if !matches_field_search {
                         continue;
                     }
@@ -286,95 +280,96 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             .into()
     };
 
-    let charts_section: Element<Message> = if let Some(ref records) = app.records {
-        if app.active_charts.is_empty() {
-            text("Нажмите + у параметра слева, чтобы добавить график")
-                .size(14)
-                .style(|_| ferra_text((0xab, 0x8a, 0x79)))
-                .into()
-        } else {
-            let (min_ts, max_ts) = extract_time_range(records);
-            let max_ts = max_ts.max(min_ts + 1.0);
-            let mut charts_col = Column::new().spacing(16);
-            for (idx, param) in app.active_charts.iter().enumerate() {
-                if let Some(data) = extract_param_series(records, param) {
-                    let chart_data = pad_series_from_zero(&data);
-                    let chart_min_ts = chart_data.first().map(|(t, _)| *t).unwrap_or(min_ts);
-                    let chart_max_ts = chart_data.last().map(|(t, _)| *t).unwrap_or(max_ts);
-                    let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
-                    let chart = LogChart::new(String::new(), chart_data, idx);
-                    let i = idx;
-                    let plot_width = if let Some((_, w)) = app.chart_bounds {
-                        (w - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0)
-                    } else {
-                        let w = (app.chart_width - 104.0).max(100.0);
-                        w - CHART_PLOT_LEFT - CHART_PLOT_RIGHT
-                    };
-                    let chart_with_cursor = mouse_area(
-                        ChartWidget::new(chart)
-                            .width(Length::Fill)
-                            .height(Length::Fixed(300.0)),
-                    )
-                    .on_move(move |p: Point| {
-                        let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
-                        let frac = (pos_in_plot / plot_width).min(1.0) as f64;
-                        Message::SetCursorTime(chart_min_ts + frac * chart_time_range)
-                    });
-                    let chart_with_tooltip = tooltip(
-                        chart_with_cursor,
-                        cursor_tooltip_content(app),
-                        iced::widget::tooltip::Position::FollowCursor,
-                    )
-                    .gap(8)
-                    .padding(6)
-                    .snap_within_viewport(true);
-                    charts_col = charts_col.push(
-                        Container::new(
-                            column![
-                                row![
-                                    text(param.as_str())
-                                        .size(15)
-                                        .style(|_| ferra_text(FERRA_ACCENT)),
-                                    Space::with_width(Length::Fill),
-                                    button(
-                                        text(iced_fonts::nerd::icon_to_string(Nerd::TrashCan))
-                                            .font(NERD_FONT)
-                                            .size(14),
-                                    )
-                                    .on_press(Message::RemoveChart(i))
-                                    .style(chart_remove_button)
-                                    .padding([6, 8]),
+    let charts_section: Element<Message> =
+        if let Some(ref records) = app.records {
+            if app.active_charts.is_empty() {
+                text("Нажмите + у параметра слева, чтобы добавить график")
+                    .size(14)
+                    .style(|_| ferra_text((0xab, 0x8a, 0x79)))
+                    .into()
+            } else {
+                let (min_ts, max_ts) = extract_time_range(records);
+                let max_ts = max_ts.max(min_ts + 1.0);
+                let mut charts_col = Column::new().spacing(16);
+                for (idx, param) in app.active_charts.iter().enumerate() {
+                    if let Some(data) = extract_param_series(records, param) {
+                        let chart_data = pad_series_from_zero(&data);
+                        let chart_min_ts = chart_data.first().map(|(t, _)| *t).unwrap_or(min_ts);
+                        let chart_max_ts = chart_data.last().map(|(t, _)| *t).unwrap_or(max_ts);
+                        let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
+                        let chart =
+                            LogChart::with_cursor(String::new(), chart_data, idx, app.cursor_time);
+                        let i = idx;
+                        let chart_widget_width = if let Some((_, w)) = app.chart_bounds {
+                            (w + 12.0).max(1.0)
+                        } else {
+                            (app.chart_width - 104.0 + 12.0).max(100.0)
+                        };
+                        let plot_width =
+                            (chart_widget_width - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0);
+                        let chart_with_cursor = mouse_area(
+                            ChartWidget::new(chart)
+                                .width(Length::Fill)
+                                .height(Length::Fixed(300.0)),
+                        )
+                        .on_move(move |p: Point| {
+                            let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
+                            let frac = (pos_in_plot / plot_width).min(1.0) as f64;
+                            Message::SetCursorTime(chart_min_ts + frac * chart_time_range)
+                        });
+                        let chart_with_tooltip = tooltip(
+                            chart_with_cursor,
+                            cursor_tooltip_content(app),
+                            iced::widget::tooltip::Position::FollowCursor,
+                        )
+                        .gap(8)
+                        .padding(6)
+                        .snap_within_viewport(true);
+                        charts_col = charts_col.push(
+                            Container::new(
+                                column![
+                                    row![
+                                        text(param.as_str())
+                                            .size(15)
+                                            .style(|_| ferra_text(FERRA_ACCENT)),
+                                        Space::with_width(Length::Fill),
+                                        button(
+                                            text(iced_fonts::nerd::icon_to_string(Nerd::TrashCan))
+                                                .font(NERD_FONT)
+                                                .size(14),
+                                        )
+                                        .on_press(Message::RemoveChart(i))
+                                        .style(chart_remove_button)
+                                        .padding([6, 8]),
+                                    ]
+                                    .spacing(12)
+                                    .align_y(Alignment::Center),
+                                    chart_with_tooltip,
                                 ]
                                 .spacing(12)
-                                .align_y(Alignment::Center),
-                                chart_with_tooltip,
-                            ]
-                            .spacing(12)
-                            .padding(16),
-                        )
-                        .style(chart_card_container),
-                    );
+                                .padding(16),
+                            )
+                            .style(chart_card_container),
+                        );
+                    }
                 }
-            }
-            Scrollable::new(
-                Container::new(charts_col)
-                    .width(Length::Fill)
-                    .padding(iced::Padding {
+                Scrollable::new(Container::new(charts_col).width(Length::Fill).padding(
+                    iced::Padding {
                         top: 0.0,
                         right: 16.0,
                         bottom: 0.0,
                         left: 0.0,
-                    }),
-            )
-            .height(Length::Fill)
-            .into()
-        }
-    } else {
-        text("Загрузите ArduPilot (.bin) или PX4 ULog (.ulg) для просмотра")
-            .size(16)
-            .style(|_| ferra_text((0xab, 0x8a, 0x79)))
-            .into()
-    };
+                    },
+                ))
+                .height(Length::Fill)
+                .into()
+            }
+        } else {
+            text("Загрузите ArduPilot (.bin) или PX4 ULog (.ulg) для просмотра")
+                .size(16)
+                .style(|_| ferra_text((0xab, 0x8a, 0x79)))
+                .into()
+        };
 
     let charts_column = Container::new(
         column![

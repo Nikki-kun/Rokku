@@ -7,7 +7,6 @@ use ulog_rs::{ULogParser, ULogValue};
 
 use super::LogRecord;
 
-/// Parses a ULog (.ulg) file and converts it to LogRecord format for charts.
 pub fn parse_ulog(filename: &str) -> Result<Vec<LogRecord>> {
     log::debug!("Parsing ULog file: {}", filename);
     let file = File::open(filename)?;
@@ -24,10 +23,7 @@ pub fn parse_ulog(filename: &str) -> Result<Vec<LogRecord>> {
             continue;
         }
 
-        // Находим поле с временной меткой (TimeUS или timestamp — микросекунды)
-        let ts_field_idx = fields_info
-            .iter()
-            .position(|f| f.field_name == "timestamp");
+        let ts_field_idx = fields_info.iter().position(|f| f.field_name == "timestamp");
 
         let n_samples = data[0].len();
         for sample_idx in 0..n_samples {
@@ -45,10 +41,7 @@ pub fn parse_ulog(filename: &str) -> Result<Vec<LogRecord>> {
                     continue;
                 };
 
-                // Берём время из поля TimeUS/timestamp (микросекунды → наносекунды).
-                // Если такого поля нет — fallback на первое поле (для совместимости).
-                let is_ts_field = ts_field_idx
-                    .map_or(field_idx == 0, |idx| field_idx == idx);
+                let is_ts_field = ts_field_idx.map_or(field_idx == 0, |idx| field_idx == idx);
                 if is_ts_field {
                     if let Some(ns) = ulog_value_to_timestamp_ns(val) {
                         timestamp_ns = ns;
@@ -74,7 +67,6 @@ pub fn parse_ulog(filename: &str) -> Result<Vec<LogRecord>> {
     Ok(records)
 }
 
-/// Конвертирует значение TimeUS/timestamp (микросекунды) в наносекунды.
 fn ulog_value_to_timestamp_ns(v: &ULogValue) -> Option<u64> {
     match v {
         ULogValue::UInt64(us) => Some(*us * 1000),

@@ -4,7 +4,6 @@ use crate::parser::LogRecord;
 
 pub const MAX_CHART_POINTS: usize = 250;
 
-/// Поля с временными метками — не показываем в выборе данных для графиков.
 const TIMESTAMP_FIELDS: &[&str] = &["TimeUS", "timestamp"];
 
 pub fn is_timestamp_field(field_name: &str) -> bool {
@@ -118,13 +117,10 @@ pub fn extract_parameters(records: &[LogRecord]) -> Vec<String> {
     }
     params
         .into_iter()
-        .filter(|p| {
-            extract_param_series(records, p).map_or(false, |s| !s.is_empty())
-        })
+        .filter(|p| extract_param_series(records, p).map_or(false, |s| !s.is_empty()))
         .collect()
 }
 
-/// Группирует параметры по префиксу (MessageType). AETR.SS, AETR.Rudd → группа AETR.
 #[derive(Debug, Clone)]
 pub struct ParamGroup {
     pub name: String,
@@ -153,8 +149,6 @@ pub fn extract_parameter_groups(records: &[LogRecord]) -> Vec<ParamGroup> {
         .collect()
 }
 
-/// Извлекает серию (время в мс, значение). Время — абсолютное (TimeUS/timestamp),
-/// может начинаться не с нуля (напр. с 12 с).
 pub fn extract_param_series(records: &[LogRecord], param: &str) -> Option<Vec<(f64, f64)>> {
     let mut parts = param.splitn(2, '.');
     let msg_type = parts.next()?;
@@ -176,8 +170,6 @@ pub fn extract_param_series(records: &[LogRecord], param: &str) -> Option<Vec<(f
     }
 }
 
-/// Добавляет точку (0, 0) в начало серии, если данные начинаются не с нуля.
-/// Используется только для отображения на графике.
 pub fn pad_series_from_zero(series: &[(f64, f64)]) -> Vec<(f64, f64)> {
     if let Some(&(first_ts, _)) = series.first() {
         if first_ts > 0.0 {
@@ -192,9 +184,10 @@ pub fn pad_series_from_zero(series: &[(f64, f64)]) -> Vec<(f64, f64)> {
     }
 }
 
-/// Проверяет, что количество временных меток совпадает с количеством значений,
-/// и логирует результат. Вызывается при добавлении графика.
-pub fn validate_param_series_and_log(records: &[LogRecord], param: &str) -> Option<Vec<(f64, f64)>> {
+pub fn validate_param_series_and_log(
+    records: &[LogRecord],
+    param: &str,
+) -> Option<Vec<(f64, f64)>> {
     let mut parts = param.splitn(2, '.');
     let msg_type = parts.next()?;
     let _ = parts.next()?;
@@ -280,7 +273,13 @@ mod tests {
 
     #[test]
     fn test_downsample_series_preserves_first_and_last() {
-        let data = vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0), (5.0, 50.0)];
+        let data = vec![
+            (1.0, 10.0),
+            (2.0, 20.0),
+            (3.0, 30.0),
+            (4.0, 40.0),
+            (5.0, 50.0),
+        ];
         let result = downsample_series(&data, 3);
         assert_eq!(result[0], (1.0, 10.0));
         assert_eq!(result.last().copied(), Some((5.0, 50.0)));
@@ -413,15 +412,14 @@ mod tests {
 
     #[test]
     fn test_extract_param_series_non_zero_start() {
-        // TimeUS/timestamp могут начинаться не с нуля (напр. 12 с)
         let records = vec![
-            make_record(12_000_000_000, "A", "v", 1.0),  // 12 s
-            make_record(13_000_000_000, "A", "v", 2.0),  // 13 s
-            make_record(14_000_000_000, "A", "v", 3.0),  // 14 s
+            make_record(12_000_000_000, "A", "v", 1.0),
+            make_record(13_000_000_000, "A", "v", 2.0),
+            make_record(14_000_000_000, "A", "v", 3.0),
         ];
         let series = extract_param_series(&records, "A.v").unwrap();
         assert_eq!(series.len(), 3);
-        assert_eq!(series[0].0, 12_000.0); // 12 s в мс
+        assert_eq!(series[0].0, 12_000.0);
         assert_eq!(series[1].0, 13_000.0);
         assert_eq!(series[2].0, 14_000.0);
     }
@@ -452,14 +450,12 @@ mod tests {
     #[test]
     fn test_validate_param_series_mismatch() {
         let _ = env_logger::try_init();
-        // 3 records of type A, but only 2 have field "v"
         let records = vec![
             make_record(1_000_000, "A", "v", 10.0),
-            make_record(2_000_000, "A", "x", 99.0), // no "v"
+            make_record(2_000_000, "A", "x", 99.0),
             make_record(3_000_000, "A", "v", 30.0),
         ];
         let result = validate_param_series_and_log(&records, "A.v");
         assert_eq!(result.as_ref().map(|s| s.len()), Some(2));
-        // 3 timestamps (records) vs 2 values (points with field v)
     }
 }
