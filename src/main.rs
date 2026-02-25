@@ -1,10 +1,13 @@
 //! Rokku - ArduPilot log viewer with plotters-iced
+//! Styled like Halloy IRC client (Ferra theme)
 
 mod parser;
 
 use iced::{
-    widget::{button, column, row, text, text_input, Column, Container, Scrollable, Space},
-    Alignment, Element, Length, Task,
+    widget::{
+        button, column, row, text, text_input, Column, Container, Scrollable, Space,
+    },
+    Alignment, Color, Element, Length, Task, Theme,
 };
 use plotters::prelude::*;
 use plotters_backend::DrawingBackend;
@@ -13,8 +16,22 @@ use std::collections::{BTreeSet, HashMap};
 
 use parser::{parse_log, LogRecord};
 
+// Halloy Ferra theme colors
+fn ferra_container(_theme: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(iced::Color::from_rgb8(0x24, 0x22, 0x26))),
+        border: iced::Border {
+            color: iced::Color::from_rgb8(0x4f, 0x47, 0x4d),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 fn main() -> iced::Result {
     iced::application("Rokku - ArduPilot Log Viewer", App::update, App::view)
+        .theme(|_| Theme::Ferra)
         .antialiasing(true)
         .run_with(App::new)
 }
@@ -89,7 +106,9 @@ impl App {
                 .on_input(Message::FilePathChanged)
                 .on_submit(Message::LoadFile)
                 .width(400),
-            button("Загрузить").on_press(Message::LoadFile),
+            button("Загрузить")
+                .on_press(Message::LoadFile)
+                .style(button::secondary),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -97,7 +116,11 @@ impl App {
         let content = column![
             controls,
             if let Some(ref err) = self.load_error {
-                text(err).size(14)
+                text(err)
+                    .size(14)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(0xe0, 0x6b, 0x75)),
+                    })
             } else {
                 text("")
             },
@@ -105,11 +128,22 @@ impl App {
         ];
 
         let params_list: Element<Message> = if self.parameters.is_empty() {
-            text("Параметры появятся после загрузки лога").size(14).into()
+            text("Параметры появятся после загрузки лога")
+                .size(14)
+                .style(|_| iced::widget::text::Style {
+                    color: Some(Color::from_rgb8(0xab, 0x8a, 0x79)),
+                })
+                .into()
         } else {
             let mut list = Column::new().spacing(4).padding(8);
             for p in &self.parameters {
-                list = list.push(text(p.as_str()).size(12));
+                list = list.push(
+                    text(p.as_str())
+                        .size(12)
+                        .style(|_| iced::widget::text::Style {
+                            color: Some(Color::from_rgb8(0xfe, 0xcd, 0xb2)),
+                        }),
+                );
             }
             Scrollable::new(list)
                 .height(Length::Fill)
@@ -119,11 +153,22 @@ impl App {
 
         let chart_section: Element<Message> = if let Some(ref records) = self.records {
             if records.is_empty() {
-                text("Файл пуст или не содержит данных").size(16).into()
+                text("Файл пуст или не содержит данных")
+                    .size(16)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(0xab, 0x8a, 0x79)),
+                    })
+                    .into()
             } else {
                 let log_chart = LogChart::new(records.clone());
                 Column::new()
-                    .push(text(format!("Загружено {} записей", records.len())).size(14))
+                    .push(
+                        text(format!("Загружено {} записей", records.len()))
+                            .size(14)
+                            .style(|_| iced::widget::text::Style {
+                                color: Some(Color::from_rgb8(0xb1, 0xb6, 0x95)),
+                            }),
+                    )
                     .push(
                         ChartWidget::new(log_chart)
                             .width(Length::Fill)
@@ -133,12 +178,21 @@ impl App {
                     .into()
             }
         } else {
-            text("Загрузите ArduPilot Dataflash лог (.bin) для просмотра").size(16).into()
+            text("Загрузите ArduPilot Dataflash лог (.bin) для просмотра")
+                .size(16)
+                .style(|_| iced::widget::text::Style {
+                    color: Some(Color::from_rgb8(0xab, 0x8a, 0x79)),
+                })
+                .into()
         };
 
         let data_panel = row![
             column![
-                text("Параметры").size(16),
+                text("Параметры")
+                    .size(16)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(0xf5, 0xd7, 0x6e)),
+                    }),
                 Space::with_height(8),
                 params_list,
             ]
@@ -162,6 +216,7 @@ impl App {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
+            .style(ferra_container)
             .into()
     }
 }
@@ -272,11 +327,10 @@ impl Chart<Message> for LogChart {
             .draw()
             .expect("draw mesh");
 
+        // Halloy Ferra cyan #5dc1c5 for chart line
+        let ferra_cyan = plotters::style::RGBColor(0x5d, 0xc1, 0xc5);
         chart
-            .draw_series(LineSeries::new(
-                self.data.iter().copied(),
-                &plotters::style::colors::BLUE,
-            ))
+            .draw_series(LineSeries::new(self.data.iter().copied(), &ferra_cyan))
             .expect("draw series");
     }
 }
