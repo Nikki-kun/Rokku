@@ -4,6 +4,7 @@ use iced::{
     },
     Alignment, Element, Length, Point,
 };
+use iced_fonts::{nerd::Nerd, nerd::to_text, NERD_FONT};
 use plotters_iced::ChartWidget;
 
 use crate::app::{App, Message};
@@ -95,7 +96,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
     let drop_zone = mouse_area(
         Container::new(
             column![
-                text("📁")
+                to_text(Nerd::Folder)
                     .size(48)
                     .style(|_| ferra_text((0x5d, 0xc1, 0xc5))),
                 Space::with_height(12),
@@ -300,7 +301,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                                     text(param.as_str())
                                         .size(15)
                                         .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
-                                    button("✕")
+                                    button(text(iced_fonts::nerd::icon_to_string(Nerd::X)).font(NERD_FONT))
                                         .on_press(Message::RemoveChart(i))
                                         .style(button::danger)
                                         .padding([6, 12]),

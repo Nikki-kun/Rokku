@@ -9,6 +9,7 @@ fn main() -> iced::Result {
     log::info!("Starting Rokku");
 
     iced::application("Rokku - ArduPilot Log Viewer", app::App::update, app::App::view)
+        .font(iced_fonts::NERD_FONT_BYTES)
         .theme(|_| iced::Theme::Ferra)
         .subscription(app::App::subscription)
         .antialiasing(true)

@@ -17,3 +17,4 @@ plotters = "0.3"
 plotters-backend = "0.3"
 rfd = "0.14"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+iced_fonts = { version = "0.2", features = ["nerd"] }
