@@ -20,8 +20,7 @@ use parser::{parse_log, LogRecord};
 
 // Chart plot area: plotters margin 15, y_label 50, x_label 35 → plot from 65 to (width-15)
 const CHART_PLOT_LEFT: f32 = 65.0;
-const CHART_WIDTH: f32 = 700.0;
-const CHART_PLOT_WIDTH: f32 = CHART_WIDTH - CHART_PLOT_LEFT - 15.0; // right margin 15
+const CHART_PLOT_RIGHT: f32 = 15.0;
 
 // Halloy Ferra palette for charts
 const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
@@ -41,6 +40,45 @@ fn ferra_container(_theme: &Theme) -> iced::widget::container::Style {
             color: IcedColor::from_rgb8(0x4f, 0x47, 0x4d),
             width: 1.0,
             radius: 4.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Drop zone style: dashed border, subtle background
+fn drop_zone_container(_theme: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(IcedColor::from_rgb8(0x1e, 0x1c, 0x20))),
+        border: iced::Border {
+            color: IcedColor::from_rgb8(0x5d, 0xc1, 0xc5),
+            width: 2.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Modern chart card style
+fn chart_card_container(_theme: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(IcedColor::from_rgb8(0x1a, 0x18, 0x1c))),
+        border: iced::Border {
+            color: IcedColor::from_rgb8(0x3d, 0x3a, 0x40),
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+/// Parameters panel style
+fn params_panel_container(_theme: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(IcedColor::from_rgb8(0x1e, 0x1c, 0x20))),
+        border: iced::Border {
+            color: IcedColor::from_rgb8(0x3d, 0x3a, 0x40),
+            width: 1.0,
+            radius: 10.0.into(),
         },
         ..Default::default()
     }
@@ -150,6 +188,7 @@ enum Message {
     AddChart(String),
     RemoveChart(usize),
     SetCursorTime(f64),
+    WindowResized((iced::window::Id, iced::Size)),
 }
 
 struct App {
@@ -160,6 +199,7 @@ struct App {
     cursor_time: Option<f64>,
     load_error: Option<String>,
     is_loading: bool,
+    chart_width: f32,
 }
 
 impl App {
@@ -173,19 +213,22 @@ impl App {
                 cursor_time: None,
                 load_error: None,
                 is_loading: false,
+                chart_width: 700.0,
             },
             Task::none(),
         )
     }
 
     fn subscription(_state: &App) -> Subscription<Message> {
-        event::listen_with(move |event, _status, _window| {
+        let file_drop = event::listen_with(move |event, _status, _window| {
             if let iced::Event::Window(window::Event::FileDropped(path)) = event {
                 Some(Message::FileDropped(path))
             } else {
                 None
             }
-        })
+        });
+        let resize = window::resize_events().map(Message::WindowResized);
+        Subscription::batch([file_drop, resize])
     }
 
     fn apply_parse_result(&mut self, path: PathBuf, result: Result<Vec<LogRecord>, String>) {
@@ -274,41 +317,146 @@ impl App {
                 state.cursor_time = Some(t);
                 Task::none()
             }
+            Message::WindowResized((_, size)) => {
+                // Chart area: window - params(280) - spacing(24) - padding(24*2)
+                state.chart_width = (size.width - 328.0).max(400.0);
+                Task::none()
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
+        // Loading state
+        if self.is_loading {
+            return Self::loading_view();
+        }
+
+        // Welcome screen: no file loaded
+        if self.records.is_none() {
+            return Self::welcome_view(self);
+        }
+
+        // Charts view: file loaded
+        Self::charts_view(self)
+    }
+
+    fn welcome_view(app: &App) -> Element<'_, Message> {
+        let drop_zone = mouse_area(
+            Container::new(
+                column![
+                    text("📁")
+                        .size(48)
+                        .style(|_| ferra_text((0x5d, 0xc1, 0xc5))),
+                    Space::with_height(12),
+                    text("Перетащите .bin файл сюда")
+                        .size(16)
+                        .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+                    text("или нажмите для выбора из проводника")
+                        .size(13)
+                        .style(|_| ferra_text((0xab, 0x8a, 0x79))),
+                ]
+                .spacing(4)
+                .align_x(Alignment::Center)
+                .padding(40),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .style(drop_zone_container),
+        )
+        .on_press(Message::OpenFilePicker)
+        .interaction(iced::mouse::Interaction::Pointer);
+
+        let error_block: Element<Message> = if let Some(ref err) = app.load_error {
+            column![
+                text("Ошибка загрузки:")
+                    .size(12)
+                    .style(|_| ferra_text((0xe0, 0x6b, 0x75))),
+                text(err.as_str())
+                    .size(12)
+                    .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+            ]
+            .spacing(4)
+            .into()
+        } else {
+            text("").into()
+        };
+
+        let welcome_content = column![
+            Space::with_height(Length::FillPortion(2)),
+            text("Rokku")
+                .size(42)
+                .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+            text("Просмотрщик логов ArduPilot")
+                .size(16)
+                .style(|_| ferra_text((0xab, 0x8a, 0x79))),
+            Space::with_height(8),
+            text("Загрузите Dataflash лог для анализа полёта")
+                .size(13)
+                .style(|_| ferra_text((0x68, 0x56, 0x50))),
+            Space::with_height(8),
+            error_block,
+            Space::with_height(Length::FillPortion(2)),
+            drop_zone,
+            Space::with_height(30),
+        ]
+        .spacing(4)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(40);
+
+        Container::new(welcome_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(ferra_container)
+            .into()
+    }
+
+    fn loading_view() -> Element<'static, Message> {
+        let content = column![
+            Space::with_height(Length::Fill),
+            text("Rokku")
+                .size(36)
+                .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+            Space::with_height(24),
+            text("Загрузка и парсинг лога...")
+                .size(16)
+                .style(|_| ferra_text((0x5d, 0xc1, 0xc5))),
+            Space::with_height(8),
+            text("Пожалуйста, подождите")
+                .size(13)
+                .style(|_| ferra_text((0xab, 0x8a, 0x79))),
+            Space::with_height(Length::Fill),
+        ]
+        .spacing(4)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        Container::new(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(ferra_container)
+            .into()
+    }
+
+    fn charts_view(&self) -> Element<'_, Message> {
         let controls = row![
-            button(if self.is_loading {
-                "Загрузка..."
-            } else {
-                "Открыть файл..."
-            })
-            .on_press_maybe(if self.is_loading {
-                None
-            } else {
-                Some(Message::OpenFilePicker)
-            })
-            .style(button::secondary),
-            if self.is_loading {
-                text("Загрузка и парсинг...")
-                    .size(14)
-                    .style(|_| ferra_text((0xf5, 0xd7, 0x6e)))
-            } else if self.file_path.is_empty() {
-                text("Перетащите .bin файл сюда или нажмите «Открыть файл»")
-                    .size(14)
-                    .style(|_| ferra_text((0xab, 0x8a, 0x79)))
-            } else {
+            button("Открыть другой файл")
+                .on_press(Message::OpenFilePicker)
+                .style(button::secondary),
+            Space::with_width(15),
+            {
                 let display_path = std::path::Path::new(&self.file_path)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(&self.file_path);
                 text(display_path)
-                    .size(12)
+                    .size(13)
                     .style(|_| ferra_text((0xb1, 0xb6, 0x95)))
             },
         ]
-        .spacing(15)
+        .spacing(8)
         .align_y(Alignment::Center);
 
         let content = column![
@@ -318,7 +466,7 @@ impl App {
             } else {
                 text("")
             },
-            Space::with_height(20),
+            Space::with_height(16),
         ];
 
         let params_list: Element<Message> = if self.parameters.is_empty() {
@@ -355,7 +503,7 @@ impl App {
             }
             Scrollable::new(list)
                 .height(Length::Fill)
-                .width(Length::Fixed(260.0))
+                .width(Length::Fill)
                 .into()
         };
 
@@ -376,13 +524,14 @@ impl App {
                         let i = idx;
                         let min_ts = min_ts;
                         let time_range = time_range;
+                        let plot_width = self.chart_width - CHART_PLOT_LEFT - CHART_PLOT_RIGHT;
                         let chart_with_cursor = mouse_area(
                             ChartWidget::new(chart)
-                                .width(Length::Fixed(CHART_WIDTH))
-                                .height(Length::Fixed(280.0)),
+                                .width(Length::Fill)
+                                .height(Length::Fixed(300.0)),
                         )
                         .on_move(move |p: Point| {
-                            let frac = ((p.x - CHART_PLOT_LEFT) / CHART_PLOT_WIDTH).clamp(0.0, 1.0);
+                            let frac = ((p.x - CHART_PLOT_LEFT) / plot_width).clamp(0.0, 1.0);
                             Message::SetCursorTime(min_ts + frac as f64 * time_range)
                         });
                         charts_col = charts_col.push(
@@ -390,21 +539,21 @@ impl App {
                                 column![
                                     row![
                                         text(param.as_str())
-                                            .size(14)
+                                            .size(15)
                                             .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
                                         button("✕")
                                             .on_press(Message::RemoveChart(i))
                                             .style(button::danger)
-                                            .padding([4, 10]),
+                                            .padding([6, 12]),
                                     ]
                                     .spacing(12)
                                     .align_y(Alignment::Center),
                                     chart_with_cursor,
                                 ]
-                                .spacing(8)
-                                .padding(12),
+                                .spacing(12)
+                                .padding(16),
                             )
-                            .style(ferra_container),
+                            .style(chart_card_container),
                         );
                     }
                 }
@@ -419,42 +568,52 @@ impl App {
                 .into()
         };
 
-        let data_panel = row![
+        let charts_column = Container::new(
             column![
-                text("Параметры")
-                    .size(16)
+                text(format!("Графики ({})", self.active_charts.len()))
+                    .size(17)
                     .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
-                text("+ добавить график")
-                    .size(11)
-                    .style(|_| ferra_text((0x68, 0x56, 0x50))),
-                Space::with_height(6),
-                params_list,
-            ]
-            .width(260)
-            .spacing(4),
-            Space::with_width(20),
-            column![
-                text(format!(
-                    "Графики ({})",
-                    self.active_charts.len()
-                ))
-                .size(16)
-                .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
-                Space::with_height(8),
+                Space::with_height(12),
                 time_slider_and_table(self),
-                Space::with_height(8),
+                Space::with_height(12),
                 charts_section,
             ]
             .width(Length::Fill)
-            .spacing(8),
+            .spacing(8)
+            .padding(20),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(chart_card_container);
+
+        let data_panel = row![
+            Container::new(
+                column![
+                    text("Параметры")
+                        .size(17)
+                        .style(|_| ferra_text((0xf5, 0xd7, 0x6e))),
+                    text("+ добавить график")
+                        .size(11)
+                        .style(|_| ferra_text((0x68, 0x56, 0x50))),
+                    Space::with_height(8),
+                    params_list,
+                ]
+                .width(Length::Fill)
+                .spacing(4)
+                .padding(16),
+            )
+            .width(280)
+            .style(params_panel_container),
+            Space::with_width(24),
+            charts_column,
         ]
         .spacing(10)
         .width(Length::Fill)
         .height(Length::Fill);
 
         let main_content = column![content, data_panel]
-            .spacing(20)
-            .padding(20)
+            .spacing(24)
+            .padding(24)
             .width(Length::Fill)
             .height(Length::Fill);
 
@@ -607,7 +766,7 @@ impl Chart<Message> for LogChart {
             .expect("draw mesh");
 
         let line_color = CHART_COLORS[self.color_idx];
-        let fill_color = line_color.mix(0.15);
+        let fill_color = line_color.mix(0.12);
 
         chart
             .draw_series(
@@ -621,7 +780,10 @@ impl Chart<Message> for LogChart {
             .expect("draw area");
 
         chart
-            .draw_series(LineSeries::new(self.data.iter().copied(), &line_color))
+            .draw_series(LineSeries::new(
+                self.data.iter().copied(),
+                ShapeStyle::from(&line_color).stroke_width(2),
+            ))
             .expect("draw line");
     }
 }
