@@ -10,7 +10,7 @@ use plotters_iced::ChartWidget;
 
 use crate::app::{App, Message};
 use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
-use crate::data::{extract_param_series, extract_time_range, pad_series_from_zero, value_at_time};
+use crate::data::pad_series_from_zero;
 use crate::ui::{
     chart_card_container, chart_remove_button, drop_zone_container, ferra_container, ferra_text,
     param_add_button, param_add_disabled, param_icon_button, params_panel_container, FERRA_ACCENT,
@@ -20,7 +20,7 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
     let Some(ref records) = app.records else {
         return text("").into();
     };
-    let (min_ts, max_ts) = extract_time_range(records);
+    let (min_ts, max_ts) = records.time_range();
     let max_ts = max_ts.max(min_ts + 1.0);
     let cursor = app.cursor_time.unwrap_or(min_ts).clamp(min_ts, max_ts);
 
@@ -33,7 +33,8 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
 
     let mut rows = Column::new().spacing(3);
     for param in &app.active_charts {
-        let val_str = value_at_time(records, param, cursor)
+        let val_str = records
+            .value_at_time(param, cursor)
             .map(|v| format!("{:.4}", v))
             .unwrap_or_else(|| "—".to_string());
         rows = rows.push(
@@ -288,11 +289,11 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                     .style(|_| ferra_text((0xab, 0x8a, 0x79)))
                     .into()
             } else {
-                let (min_ts, max_ts) = extract_time_range(records);
+                let (min_ts, max_ts) = records.time_range();
                 let max_ts = max_ts.max(min_ts + 1.0);
                 let mut charts_col = Column::new().spacing(16);
                 for (idx, param) in app.active_charts.iter().enumerate() {
-                    if let Some(data) = extract_param_series(records, param) {
+                    if let Some(data) = records.get_series(param) {
                         let chart_data = pad_series_from_zero(&data);
                         let chart_min_ts = chart_data.first().map(|(t, _)| *t).unwrap_or(min_ts);
                         let chart_max_ts = chart_data.last().map(|(t, _)| *t).unwrap_or(max_ts);

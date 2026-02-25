@@ -1,10 +1,84 @@
-use std::collections::BTreeSet;
-
-use crate::parser::LogRecord;
+use std::collections::HashMap;
 
 pub const MAX_CHART_POINTS: usize = 250;
 
 const TIMESTAMP_FIELDS: &[&str] = &["TimeUS", "timestamp"];
+
+#[derive(Clone, Debug, Default)]
+pub struct ParsedLog {
+    pub(crate) series: HashMap<String, Vec<(u64, f64)>>,
+    pub(crate) time_range: (f64, f64),
+    pub(crate) parameters: Vec<String>,
+    pub(crate) parameter_groups: Vec<ParamGroup>,
+}
+
+impl ParsedLog {
+    pub fn time_range(&self) -> (f64, f64) {
+        if self.series.is_empty() {
+            return (0.0, 1.0);
+        }
+        self.time_range
+    }
+
+    pub fn parameters(&self) -> &[String] {
+        &self.parameters
+    }
+
+    pub fn parameter_groups(&self) -> &[ParamGroup] {
+        &self.parameter_groups
+    }
+
+    pub fn get_series(&self, param: &str) -> Option<Vec<(f64, f64)>> {
+        let data = self.series.get(param)?;
+        if data.is_empty() {
+            return None;
+        }
+        Some(
+            data.iter()
+                .map(|(ns, v)| (*ns as f64 / 1_000_000.0, *v))
+                .collect(),
+        )
+    }
+
+    pub fn value_at_time(&self, param: &str, t: f64) -> Option<f64> {
+        let data = self.series.get(param)?;
+        if data.is_empty() {
+            return None;
+        }
+        let t_ns = (t * 1_000_000.0) as u64;
+        let idx = data.partition_point(|(ns, _)| *ns < t_ns);
+        if idx == 0 {
+            return Some(data[0].1);
+        }
+        if idx >= data.len() {
+            return Some(data[data.len() - 1].1);
+        }
+        let (t1, v1) = data[idx - 1];
+        let (t2, v2) = data[idx];
+        let t1_f = t1 as f64 / 1_000_000.0;
+        let t2_f = t2 as f64 / 1_000_000.0;
+        let frac = if (t2_f - t1_f).abs() < 1e-9 {
+            1.0
+        } else {
+            (t - t1_f) / (t2_f - t1_f)
+        };
+        Some(v1 + (v2 - v1) * frac)
+    }
+
+    pub fn validate_param_series(&self, param: &str) -> Option<Vec<(f64, f64)>> {
+        let series = self.get_series(param)?;
+        if let Some(&(first_ts, _)) = series.first() {
+            log::info!(
+                "Param {}: first TimeUS/timestamp = {:.2} ms ({:.3} s)",
+                param,
+                first_ts,
+                first_ts / 1000.0
+            );
+            log::info!("Param {}: {} points", param, series.len());
+        }
+        Some(series)
+    }
+}
 
 pub fn is_timestamp_field(field_name: &str) -> bool {
     TIMESTAMP_FIELDS.contains(&field_name)
@@ -65,109 +139,10 @@ pub fn downsample_series(data: &[(f64, f64)], max_points: usize) -> Vec<(f64, f6
     result
 }
 
-pub fn extract_time_range(records: &[LogRecord]) -> (f64, f64) {
-    if records.is_empty() {
-        return (0.0, 1.0);
-    }
-    let (min_ns, max_ns) = records
-        .iter()
-        .map(|r| r.timestamp_ns as f64)
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
-            (a.min(t), b.max(t))
-        });
-    (min_ns / 1_000_000.0, max_ns / 1_000_000.0)
-}
-
-pub fn value_at_time(records: &[LogRecord], param: &str, t: f64) -> Option<f64> {
-    let series = extract_param_series(records, param)?;
-    if series.is_empty() {
-        return None;
-    }
-    let first_ts = series[0].0;
-    let last_ts = series.last()?.0;
-    if t <= first_ts {
-        return Some(series[0].1);
-    }
-    if t >= last_ts {
-        return Some(series.last()?.1);
-    }
-    for i in 0..series.len() - 1 {
-        let (t1, v1) = series[i];
-        let (t2, v2) = series[i + 1];
-        if t >= t1 && t <= t2 {
-            let frac = if (t2 - t1).abs() < 1e-9 {
-                1.0
-            } else {
-                (t - t1) / (t2 - t1)
-            };
-            return Some(v1 + (v2 - v1) * frac);
-        }
-    }
-    None
-}
-
-pub fn extract_parameters(records: &[LogRecord]) -> Vec<String> {
-    let mut params = BTreeSet::new();
-    for r in records {
-        for field_name in r.fields.keys() {
-            if !is_timestamp_field(field_name) {
-                params.insert(format!("{}.{}", r.message_type, field_name));
-            }
-        }
-    }
-    params
-        .into_iter()
-        .filter(|p| extract_param_series(records, p).map_or(false, |s| !s.is_empty()))
-        .collect()
-}
-
 #[derive(Debug, Clone)]
 pub struct ParamGroup {
     pub name: String,
     pub fields: Vec<String>,
-}
-
-pub fn extract_parameter_groups(records: &[LogRecord]) -> Vec<ParamGroup> {
-    let params = extract_parameters(records);
-    let mut groups: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
-    for p in params {
-        if let Some((name, field)) = p.split_once('.') {
-            groups
-                .entry(name.to_string())
-                .or_default()
-                .push(field.to_string());
-        }
-    }
-    groups
-        .into_iter()
-        .map(|(name, mut fields)| {
-            fields.sort();
-            fields.dedup();
-            ParamGroup { name, fields }
-        })
-        .collect()
-}
-
-pub fn extract_param_series(records: &[LogRecord], param: &str) -> Option<Vec<(f64, f64)>> {
-    let mut parts = param.splitn(2, '.');
-    let msg_type = parts.next()?;
-    let field = parts.next()?;
-    let mut points = Vec::new();
-    for r in records {
-        if r.message_type == msg_type {
-            if let Some(v) = r.fields.get(field) {
-                let val = v.as_f64().or_else(|| v.as_i64().map(|x| x as f64))?;
-                points.push((r.timestamp_ns as f64 / 1_000_000.0, val));
-            }
-        }
-    }
-    if points.is_empty() {
-        None
-    } else {
-        points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        Some(points)
-    }
 }
 
 pub fn pad_series_from_zero(series: &[(f64, f64)]) -> Vec<(f64, f64)> {
@@ -184,73 +159,55 @@ pub fn pad_series_from_zero(series: &[(f64, f64)]) -> Vec<(f64, f64)> {
     }
 }
 
-pub fn validate_param_series_and_log(
-    records: &[LogRecord],
-    param: &str,
-) -> Option<Vec<(f64, f64)>> {
-    let mut parts = param.splitn(2, '.');
-    let msg_type = parts.next()?;
-    let _ = parts.next()?;
-
-    let n_records_with_ts: usize = records
-        .iter()
-        .filter(|r| r.message_type == msg_type)
-        .count();
-
-    let series = extract_param_series(records, param)?;
-    let n_points = series.len();
-
-    if let Some((first_ts_ms, _)) = series.first() {
-        log::info!(
-            "Param {}: first TimeUS/timestamp = {:.2} ms ({:.3} s)",
-            param,
-            first_ts_ms,
-            first_ts_ms / 1000.0
-        );
-    }
-
-    if n_points != n_records_with_ts {
-        log::error!(
-            "Param {}: mismatch - {} timestamps (TimeUS/timestamp) vs {} values",
-            param,
-            n_records_with_ts,
-            n_points
-        );
-    } else {
-        log::info!(
-            "Param {}: {} points, timestamps and values match",
-            param,
-            n_points
-        );
-    }
-
-    Some(series)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
+
     use super::*;
-    use serde_json::json;
 
-    fn make_record(ts_ns: u64, msg_type: &str, field: &str, value: f64) -> LogRecord {
-        LogRecord {
-            timestamp_ns: ts_ns,
-            message_type: msg_type.to_string(),
-            type_id: 0,
-            fields: [(field.to_string(), json!(value))].into_iter().collect(),
+    fn make_parsed_log(
+        series: impl IntoIterator<Item = (&'static str, Vec<(u64, f64)>)>,
+    ) -> ParsedLog {
+        let series: HashMap<String, Vec<(u64, f64)>> = series
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let mut min_ns = u64::MAX;
+        let mut max_ns = 0u64;
+        for v in series.values() {
+            for &(ns, _) in v {
+                min_ns = min_ns.min(ns);
+                max_ns = max_ns.max(ns);
+            }
         }
-    }
-
-    fn make_record_multi(
-        ts_ns: u64,
-        msg_type: &str,
-        fields: impl IntoIterator<Item = (String, serde_json::Value)>,
-    ) -> LogRecord {
-        LogRecord {
-            timestamp_ns: ts_ns,
-            message_type: msg_type.to_string(),
-            type_id: 0,
-            fields: fields.into_iter().collect(),
+        let time_range = if min_ns <= max_ns {
+            (min_ns as f64 / 1_000_000.0, max_ns as f64 / 1_000_000.0)
+        } else {
+            (0.0, 1.0)
+        };
+        let parameters: Vec<String> = series.keys().cloned().collect();
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for p in &parameters {
+            if let Some((name, field)) = p.split_once('.') {
+                groups
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(field.to_string());
+            }
+        }
+        let parameter_groups: Vec<ParamGroup> = groups
+            .into_iter()
+            .map(|(name, mut fields)| {
+                fields.sort();
+                fields.dedup();
+                ParamGroup { name, fields }
+            })
+            .collect();
+        ParsedLog {
+            series,
+            time_range,
+            parameters,
+            parameter_groups,
         }
     }
 
@@ -286,32 +243,32 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_time_range() {
-        let records = vec![
-            make_record(1_000_000, "A", "x", 1.0),
-            make_record(5_000_000, "A", "x", 2.0),
-            make_record(3_000_000, "A", "x", 1.5),
-        ];
-        let (min, max) = extract_time_range(&records);
+    fn test_time_range() {
+        let log = make_parsed_log([(
+            "A.x",
+            vec![(1_000_000, 1.0), (5_000_000, 2.0), (3_000_000, 1.5)],
+        )]);
+        let (min, max) = log.time_range();
         assert!((min - 1.0).abs() < 1e-9);
         assert!((max - 5.0).abs() < 1e-9);
     }
 
     #[test]
-    fn test_extract_time_range_empty() {
-        let (min, max) = extract_time_range(&[]);
+    fn test_time_range_empty() {
+        let log = ParsedLog::default();
+        let (min, max) = log.time_range();
         assert_eq!(min, 0.0);
         assert_eq!(max, 1.0);
     }
 
     #[test]
-    fn test_extract_parameters() {
-        let records = vec![
-            make_record(0, "GPS", "Lat", 55.0),
-            make_record(0, "GPS", "Lng", 37.0),
-            make_record(0, "ATT", "Roll", 0.1),
-        ];
-        let params = extract_parameters(&records);
+    fn test_parameters() {
+        let log = make_parsed_log([
+            ("GPS.Lat", vec![(0, 55.0)]),
+            ("GPS.Lng", vec![(0, 37.0)]),
+            ("ATT.Roll", vec![(0, 0.1)]),
+        ]);
+        let params = log.parameters();
         assert_eq!(params.len(), 3);
         assert!(params.contains(&"ATT.Roll".to_string()));
         assert!(params.contains(&"GPS.Lat".to_string()));
@@ -319,26 +276,12 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_parameters_excludes_timestamp_fields() {
-        let records = vec![
-            make_record_multi(
-                1_000_000,
-                "AETR",
-                [
-                    ("TimeUS".to_string(), json!(1_000_000)),
-                    ("SS".to_string(), json!(5.0)),
-                ],
-            ),
-            make_record_multi(
-                2_000_000,
-                "GPS",
-                [
-                    ("timestamp".to_string(), json!(2_000_000)),
-                    ("Lat".to_string(), json!(55.0)),
-                ],
-            ),
-        ];
-        let params = extract_parameters(&records);
+    fn test_parameters_excludes_timestamp_fields() {
+        let log = make_parsed_log([
+            ("AETR.SS", vec![(1_000_000, 5.0)]),
+            ("GPS.Lat", vec![(2_000_000, 55.0)]),
+        ]);
+        let params = log.parameters();
         assert!(!params.iter().any(|p| p.ends_with(".TimeUS")));
         assert!(!params.iter().any(|p| p.ends_with(".timestamp")));
         assert!(params.contains(&"AETR.SS".to_string()));
@@ -354,28 +297,14 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_parameter_groups() {
-        let records = vec![
-            make_record_multi(
-                1_000_000,
-                "AETR",
-                [
-                    ("TimeUS".to_string(), json!(1_000_000)),
-                    ("SS".to_string(), json!(5.0)),
-                    ("Rudd".to_string(), json!(10.0)),
-                ],
-            ),
-            make_record_multi(
-                2_000_000,
-                "GPS",
-                [
-                    ("timestamp".to_string(), json!(2_000_000)),
-                    ("Lat".to_string(), json!(55.0)),
-                    ("Lng".to_string(), json!(37.0)),
-                ],
-            ),
-        ];
-        let groups = extract_parameter_groups(&records);
+    fn test_parameter_groups() {
+        let log = make_parsed_log([
+            ("AETR.SS", vec![(1_000_000, 5.0)]),
+            ("AETR.Rudd", vec![(1_000_000, 10.0)]),
+            ("GPS.Lat", vec![(2_000_000, 55.0)]),
+            ("GPS.Lng", vec![(2_000_000, 37.0)]),
+        ]);
+        let groups = log.parameter_groups();
         assert_eq!(groups.len(), 2);
         let aetr = groups.iter().find(|g| g.name == "AETR").unwrap();
         assert_eq!(aetr.fields.len(), 2);
@@ -384,13 +313,12 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_param_series() {
-        let records = vec![
-            make_record(1_000_000, "A", "v", 10.0),
-            make_record(2_000_000, "A", "v", 20.0),
-            make_record(3_000_000, "B", "v", 99.0),
-        ];
-        let series = extract_param_series(&records, "A.v").unwrap();
+    fn test_get_series() {
+        let log = make_parsed_log([
+            ("A.v", vec![(1_000_000, 10.0), (2_000_000, 20.0)]),
+            ("B.v", vec![(3_000_000, 99.0)]),
+        ]);
+        let series = log.get_series("A.v").unwrap();
         assert_eq!(series.len(), 2);
         assert_eq!(series[0], (1.0, 10.0));
         assert_eq!(series[1], (2.0, 20.0));
@@ -411,13 +339,16 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_param_series_non_zero_start() {
-        let records = vec![
-            make_record(12_000_000_000, "A", "v", 1.0),
-            make_record(13_000_000_000, "A", "v", 2.0),
-            make_record(14_000_000_000, "A", "v", 3.0),
-        ];
-        let series = extract_param_series(&records, "A.v").unwrap();
+    fn test_get_series_non_zero_start() {
+        let log = make_parsed_log([(
+            "A.v",
+            vec![
+                (12_000_000_000, 1.0),
+                (13_000_000_000, 2.0),
+                (14_000_000_000, 3.0),
+            ],
+        )]);
+        let series = log.get_series("A.v").unwrap();
         assert_eq!(series.len(), 3);
         assert_eq!(series[0].0, 12_000.0);
         assert_eq!(series[1].0, 13_000.0);
@@ -426,23 +357,17 @@ mod tests {
 
     #[test]
     fn test_value_at_time_interpolation() {
-        let records = vec![
-            make_record(1_000_000, "A", "v", 10.0),
-            make_record(3_000_000, "A", "v", 30.0),
-        ];
-        assert_eq!(value_at_time(&records, "A.v", 0.5), Some(10.0));
-        assert_eq!(value_at_time(&records, "A.v", 2.0), Some(20.0));
-        assert_eq!(value_at_time(&records, "A.v", 4.0), Some(30.0));
+        let log = make_parsed_log([("A.v", vec![(1_000_000, 10.0), (3_000_000, 30.0)])]);
+        assert_eq!(log.value_at_time("A.v", 0.5), Some(10.0));
+        assert_eq!(log.value_at_time("A.v", 2.0), Some(20.0));
+        assert_eq!(log.value_at_time("A.v", 4.0), Some(30.0));
     }
 
     #[test]
     fn test_validate_param_series_match() {
         let _ = env_logger::try_init();
-        let records = vec![
-            make_record(1_000_000, "A", "v", 10.0),
-            make_record(2_000_000, "A", "v", 20.0),
-        ];
-        let result = validate_param_series_and_log(&records, "A.v");
+        let log = make_parsed_log([("A.v", vec![(1_000_000, 10.0), (2_000_000, 20.0)])]);
+        let result = log.validate_param_series("A.v");
         assert_eq!(result.as_ref().map(|s| s.len()), Some(2));
         assert_eq!(result.unwrap()[0], (1.0, 10.0));
     }
@@ -450,12 +375,11 @@ mod tests {
     #[test]
     fn test_validate_param_series_mismatch() {
         let _ = env_logger::try_init();
-        let records = vec![
-            make_record(1_000_000, "A", "v", 10.0),
-            make_record(2_000_000, "A", "x", 99.0),
-            make_record(3_000_000, "A", "v", 30.0),
-        ];
-        let result = validate_param_series_and_log(&records, "A.v");
+        let log = make_parsed_log([
+            ("A.v", vec![(1_000_000, 10.0), (3_000_000, 30.0)]),
+            ("A.x", vec![(2_000_000, 99.0)]),
+        ]);
+        let result = log.validate_param_series("A.v");
         assert_eq!(result.as_ref().map(|s| s.len()), Some(2));
     }
 }

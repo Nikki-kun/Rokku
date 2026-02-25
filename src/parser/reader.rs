@@ -1,12 +1,12 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Seek},
+    io::{BufReader, Cursor, Read, Seek},
+    sync::Arc,
 };
 
 use anyhow::{anyhow, Context, Result};
 use binrw::{binread, BinRead};
-use serde_json::{json, Map, Value};
 
 #[binread]
 #[br(little, magic = b"\xA3\x95")]
@@ -36,7 +36,7 @@ fn sanitize_str(bytes: &[u8]) -> String {
 }
 
 #[derive(Debug)]
-enum LogValue {
+pub enum LogValue {
     Int(i64),
     UInt(u64),
     Float(f32),
@@ -44,27 +44,14 @@ enum LogValue {
     Str(String),
 }
 
-impl From<LogValue> for Value {
-    fn from(value: LogValue) -> Self {
-        use LogValue::*;
-        match value {
-            Int(v) => json!(v),
-            UInt(v) => json!(v),
-            Float(v) => {
-                if v.is_finite() {
-                    json!(v)
-                } else {
-                    Value::Null
-                }
-            }
-            Double(v) => {
-                if v.is_finite() {
-                    json!(v)
-                } else {
-                    Value::Null
-                }
-            }
-            Str(v) => json!(v),
+impl LogValue {
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            LogValue::Int(v) => Some(*v as f64),
+            LogValue::UInt(v) => Some(*v as f64),
+            LogValue::Float(v) if v.is_finite() => Some(*v as f64),
+            LogValue::Double(v) if v.is_finite() => Some(*v),
+            _ => None,
         }
     }
 }
@@ -79,6 +66,14 @@ fn field_length(fmt_char: char) -> Result<u64> {
         'Z' => Ok(64),
         _ => Err(anyhow!("unexpcted char: {}", fmt_char)),
     }
+}
+
+fn compute_body_size(format_str: &str) -> Result<usize> {
+    let mut total = 0usize;
+    for c in format_str.bytes() {
+        total += field_length(c as char)? as usize;
+    }
+    Ok(total)
 }
 
 fn parse_value(
@@ -115,25 +110,29 @@ fn parse_value(
     }
 }
 
-const BUF_SIZE: usize = 256 * 1024;
+const BUF_SIZE: usize = 2 * 1024 * 1024;
+const MSG_BODY_BUF: usize = 256;
 
 pub struct ArduReader {
     filename: String,
     file: Option<BufReader<File>>,
     definitions: HashMap<u8, ArduDefinition>,
     last_timestamp: u64,
+    msg_body_buf: Vec<u8>,
 }
 
 #[derive(Clone)]
 pub struct ArduDefinition {
     pub ardu_fmt: FmtPacket,
     pub labels: Vec<String>,
+    pub body_size: usize,
+    pub name: Arc<str>,
 }
 
 pub struct ArduMessage {
     pub type_id: u8,
     pub current_ts: u64,
-    pub json_obj: Map<String, Value>,
+    pub fields: Vec<(String, LogValue)>,
 }
 
 impl ArduReader {
@@ -143,6 +142,7 @@ impl ArduReader {
             file: None,
             definitions: HashMap::new(),
             last_timestamp: 0,
+            msg_body_buf: vec![0u8; MSG_BODY_BUF],
         }
     }
 
@@ -173,13 +173,17 @@ impl ArduReader {
             let ardu_fmt = FmtPacket::read(file)?;
             let labels: Vec<String> = ardu_fmt
                 .labels
-                .split(",")
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
+
+            let body_size = compute_body_size(&ardu_fmt.format_str).unwrap_or(0);
 
             let definition = ArduDefinition {
                 ardu_fmt: ardu_fmt.clone(),
                 labels,
+                body_size,
+                name: Arc::from(ardu_fmt.name.as_str()),
             };
 
             self.definitions
@@ -187,29 +191,33 @@ impl ArduReader {
 
             return Ok(ArduFrame::ArduDefinition(definition));
         } else if let Some(definition) = self.definitions.get(&header.msg_id) {
+            let body_size = definition.body_size;
+            if body_size == 0 {
+                return Err(anyhow!("Invalid format for msg_id {}", header.msg_id));
+            }
+
+            if self.msg_body_buf.len() < body_size {
+                self.msg_body_buf.resize(body_size, 0);
+            }
+            let buf = &mut self.msg_body_buf[..body_size];
+            if let Err(e) = file.read_exact(buf) {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    eprintln!(
+                        "\nWARNING: file is incomplete. Expected {} bytes for msg_id {} at EOF.",
+                        body_size, header.msg_id
+                    );
+                    return Ok(ArduFrame::Eof);
+                }
+                return Err(e.into());
+            }
+
+            let mut cursor = Cursor::new(buf);
             let mut current_ts = 0u64;
-            let n_fields = definition.labels.len();
-            let mut json_obj = Map::with_capacity(n_fields);
+            let mut fields = Vec::with_capacity(definition.labels.len());
 
             for (idx, c) in definition.ardu_fmt.format_str.bytes().enumerate() {
                 let c = c as char;
-                let val = match parse_value(file, c) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        let file_size = file.get_ref().metadata()?.len();
-                        let current_pos = file.stream_position()?;
-                        let field_len = field_length(c)?;
-
-                        if current_pos + field_len > file_size {
-                            eprintln!(
-                                "\nWARNING: file is incomplete. Current position: {}. Expecting field length: {}. File size: {}",
-                                current_pos, field_len, file_size
-                            );
-                            return Ok(ArduFrame::Eof);
-                        }
-                        return Err(e);
-                    }
-                };
+                let val = parse_value(&mut cursor, c)?;
 
                 let label = definition.labels[idx].clone();
                 if label == "TimeUS" {
@@ -220,7 +228,7 @@ impl ArduReader {
                     }
                 }
 
-                json_obj.insert(label, val.into());
+                fields.push((label, val));
             }
 
             if current_ts > 0 {
@@ -232,7 +240,7 @@ impl ArduReader {
             return Ok(ArduFrame::ArduMessage(ArduMessage {
                 type_id: header.msg_id,
                 current_ts,
-                json_obj,
+                fields,
             }));
         }
 

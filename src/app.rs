@@ -2,11 +2,8 @@ use std::path::PathBuf;
 
 use iced::{event, window, Subscription, Task};
 
-use crate::data::{
-    extract_parameter_groups, extract_parameters, extract_time_range,
-    validate_param_series_and_log, ParamGroup,
-};
-use crate::parser::{parse_log, LogRecord};
+use crate::data::{ParamGroup, ParsedLog};
+use crate::parser::parse_log;
 use crate::ui::{charts_view, loading_view, welcome_view};
 
 #[derive(Debug, Clone)]
@@ -14,7 +11,7 @@ pub enum Message {
     FileDropped(PathBuf),
     OpenFilePicker,
     FileSelected(Option<PathBuf>),
-    ParseComplete((PathBuf, Result<Vec<LogRecord>, String>)),
+    ParseComplete((PathBuf, Result<ParsedLog, String>)),
     AddChart(String),
     RemoveChart(usize),
     SetCursorTime(f64),
@@ -25,7 +22,7 @@ pub enum Message {
 
 pub struct App {
     pub file_path: String,
-    pub records: Option<Vec<LogRecord>>,
+    pub records: Option<ParsedLog>,
     pub parameters: Vec<String>,
     pub parameter_groups: Vec<ParamGroup>,
     pub expanded_groups: std::collections::HashSet<String>,
@@ -71,19 +68,20 @@ impl App {
         Subscription::batch([file_drop, resize])
     }
 
-    pub fn apply_parse_result(&mut self, path: PathBuf, result: Result<Vec<LogRecord>, String>) {
+    pub fn apply_parse_result(&mut self, path: PathBuf, result: Result<ParsedLog, String>) {
         self.is_loading = false;
-        match &result {
+        match result {
             Ok(records) => {
-                log::info!("Parsed {} records from {}", records.len(), path.display());
+                let n_params = records.parameters().len();
+                log::info!("Parsed {} parameters from {}", n_params, path.display());
                 self.file_path = path.to_string_lossy().to_string();
-                self.parameters = extract_parameters(records);
-                self.parameter_groups = extract_parameter_groups(records);
-                self.records = Some(records.clone());
+                self.parameters = records.parameters().to_vec();
+                self.parameter_groups = records.parameter_groups().to_vec();
+                self.records = Some(records);
                 self.load_error = None;
                 self.active_charts.clear();
                 self.expanded_groups.clear();
-                let (min_ts, _) = extract_time_range(records);
+                let (min_ts, _) = self.records.as_ref().unwrap().time_range();
                 self.cursor_time = Some(min_ts);
                 if self.chart_bounds.is_none() {
                     let chart_left = 24.0 + 280.0 + 24.0 + 20.0 + 20.0 + 16.0;
@@ -94,7 +92,7 @@ impl App {
             }
             Err(e) => {
                 log::error!("Parse failed: {}", e);
-                self.load_error = Some(e.clone());
+                self.load_error = Some(e);
                 self.records = None;
                 self.parameters = Vec::new();
                 self.parameter_groups = Vec::new();
@@ -156,7 +154,7 @@ impl App {
             Message::AddChart(param) => {
                 if !state.active_charts.contains(&param) {
                     if let Some(ref records) = state.records {
-                        validate_param_series_and_log(records, &param);
+                        let _ = records.validate_param_series(param.as_str());
                     }
                     log::debug!("Added chart: {}", param);
                     state.active_charts.push(param);
