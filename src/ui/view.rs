@@ -9,7 +9,7 @@ use iced_fonts::{nerd::to_text, nerd::Nerd, NERD_FONT};
 use plotters_iced::ChartWidget;
 
 use crate::app::{App, Message};
-use crate::chart::{CombinedLogChart, LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
+use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
 use crate::data::pad_series_from_zero;
 use crate::ui::{
     chart_card_container, chart_remove_button, drop_zone_container, ferra_container, ferra_text,
@@ -292,64 +292,6 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                 let (min_ts, max_ts) = records.time_range();
                 let max_ts = max_ts.max(min_ts + 1.0);
                 let mut charts_col = Column::new().spacing(16);
-
-                if app.active_charts.len() >= 2 {
-                    let combined_series: Vec<(String, Vec<(f64, f64)>)> = app
-                        .active_charts
-                        .iter()
-                        .filter_map(|param| {
-                            records.get_series(param).map(|s| (param.clone(), s))
-                        })
-                        .collect();
-                    if !combined_series.is_empty() {
-                        let chart_min_ts = combined_series
-                            .iter()
-                            .flat_map(|(_, d)| d.first().map(|(t, _)| *t))
-                            .fold(f64::INFINITY, f64::min);
-                        let chart_max_ts = combined_series
-                            .iter()
-                            .flat_map(|(_, d)| d.last().map(|(t, _)| *t))
-                            .fold(f64::NEG_INFINITY, f64::max);
-                        let chart_time_range = (chart_max_ts - chart_min_ts).max(0.001);
-                        let plot_width = if let Some((_, w)) = app.chart_bounds {
-                            (w + 12.0 - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0)
-                        } else {
-                            (app.chart_width - 104.0 - CHART_PLOT_LEFT - CHART_PLOT_RIGHT + 12.0)
-                                .max(100.0)
-                        };
-                        let combined_chart = CombinedLogChart::new(
-                            combined_series,
-                            app.cursor_time,
-                        );
-                        let combined_with_cursor = mouse_area(
-                            ChartWidget::new(combined_chart)
-                                .width(Length::Fill)
-                                .height(Length::Fixed(200.0)),
-                        )
-                        .on_move(move |p: Point| {
-                            let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
-                            let frac = (pos_in_plot / plot_width).min(1.0) as f64;
-                            Message::SetCursorTime(chart_min_ts + frac * chart_time_range)
-                        });
-                        let combined_with_tooltip = tooltip(
-                            combined_with_cursor,
-                            cursor_tooltip_content(app),
-                            iced::widget::tooltip::Position::FollowCursor,
-                        )
-                        .gap(8)
-                        .padding(6)
-                        .snap_within_viewport(true);
-                        charts_col = charts_col.push(
-                            Container::new(
-                                column![combined_with_tooltip]
-                                    .spacing(8)
-                                    .padding(16),
-                            )
-                            .style(chart_card_container),
-                        );
-                    }
-                }
-
                 for (idx, param) in app.active_charts.iter().enumerate() {
                     if let Some(data) = records.get_series(param) {
                         let chart_data = pad_series_from_zero(&data);
