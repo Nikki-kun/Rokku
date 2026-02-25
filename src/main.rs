@@ -4,15 +4,17 @@
 mod parser;
 
 use iced::{
+    event, window,
     widget::{
-        button, column, row, text, text_input, Column, Container, Scrollable, Space,
+        button, column, row, text, Column, Container, Scrollable, Space,
     },
-    Alignment, Color, Element, Length, Task, Theme,
+    Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
 use plotters::prelude::*;
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartWidget};
 use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
 
 use parser::{parse_log, LogRecord};
 
@@ -32,14 +34,18 @@ fn ferra_container(_theme: &Theme) -> iced::widget::container::Style {
 fn main() -> iced::Result {
     iced::application("Rokku - ArduPilot Log Viewer", App::update, App::view)
         .theme(|_| Theme::Ferra)
+        .subscription(App::subscription)
         .antialiasing(true)
         .run_with(App::new)
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-    FilePathChanged(String),
-    LoadFile,
+    FileDropped(PathBuf),
+    OpenFilePicker,
+    FileSelected(Option<PathBuf>),
+    /// Результат фонового парсинга: (путь, результат)
+    ParseComplete((PathBuf, Result<Vec<LogRecord>, String>)),
 }
 
 struct App {
@@ -47,6 +53,7 @@ struct App {
     records: Option<Vec<LogRecord>>,
     parameters: Vec<String>,
     load_error: Option<String>,
+    is_loading: bool,
 }
 
 /// Extract all unique parameters (message_type.field_name) from parsed records.
@@ -68,49 +75,129 @@ impl App {
                 records: None,
                 parameters: Vec::new(),
                 load_error: None,
+                is_loading: false,
             },
             Task::none(),
         )
     }
 
-    fn update(&mut self, message: Message) {
-        match message {
-            Message::FilePathChanged(path) => {
-                self.file_path = path;
+    fn subscription(_state: &App) -> Subscription<Message> {
+        event::listen_with(move |event, _status, _window| {
+            if let iced::Event::Window(window::Event::FileDropped(path)) = event {
+                Some(Message::FileDropped(path))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn apply_parse_result(&mut self, path: PathBuf, result: Result<Vec<LogRecord>, String>) {
+        self.is_loading = false;
+        match result {
+            Ok(records) => {
+                self.file_path = path.to_string_lossy().to_string();
+                self.parameters = extract_parameters(&records);
+                self.records = Some(records);
                 self.load_error = None;
             }
-            Message::LoadFile => {
-                if self.file_path.is_empty() {
-                    self.load_error = Some("Введите путь к файлу".to_string());
-                    return;
+            Err(e) => {
+                self.load_error = Some(e);
+                self.records = None;
+                self.parameters = Vec::new();
+            }
+        }
+    }
+
+    fn start_parse(path: PathBuf) -> Task<Message> {
+        Task::perform(
+            async move {
+                let path_clone = path.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    parse_log(&path_clone.to_string_lossy()).map_err(|e| e.to_string())
+                })
+                .await
+                .unwrap_or_else(|_| Err("Парсинг прерван".to_string()));
+                (path, result)
+            },
+            Message::ParseComplete,
+        )
+    }
+
+    fn update(state: &mut App, message: Message) -> Task<Message> {
+        match message {
+            Message::FileDropped(path) => {
+                state.is_loading = true;
+                state.load_error = None;
+                App::start_parse(path)
+            }
+            Message::OpenFilePicker => Task::perform(
+                async {
+                    tokio::task::spawn_blocking(|| {
+                        rfd::FileDialog::new()
+                            .add_filter("ArduPilot log", &["bin"])
+                            .set_title("Выберите файл лога")
+                            .pick_file()
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                },
+                Message::FileSelected,
+            ),
+            Message::FileSelected(path) => {
+                if let Some(p) = path {
+                    state.is_loading = true;
+                    state.load_error = None;
+                    App::start_parse(p)
+                } else {
+                    Task::none()
                 }
-                match parse_log(&self.file_path) {
-                    Ok(records) => {
-                        self.parameters = extract_parameters(&records);
-                        self.records = Some(records);
-                        self.load_error = None;
-                    }
-                    Err(e) => {
-                        self.load_error = Some(e.to_string());
-                        self.records = None;
-                        self.parameters = Vec::new();
-                    }
-                }
+            }
+            Message::ParseComplete((path, result)) => {
+                state.apply_parse_result(path, result);
+                Task::none()
             }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         let controls = row![
-            text_input("Путь к .bin файлу", &self.file_path)
-                .on_input(Message::FilePathChanged)
-                .on_submit(Message::LoadFile)
-                .width(400),
-            button("Загрузить")
-                .on_press(Message::LoadFile)
-                .style(button::secondary),
+            button(if self.is_loading {
+                "Загрузка..."
+            } else {
+                "Открыть файл..."
+            })
+            .on_press_maybe(if self.is_loading {
+                None
+            } else {
+                Some(Message::OpenFilePicker)
+            })
+            .style(button::secondary),
+            if self.is_loading {
+                text("Загрузка и парсинг...")
+                    .size(14)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(0xf5, 0xd7, 0x6e)),
+                    })
+            } else if self.file_path.is_empty() {
+                text("Перетащите .bin файл сюда или нажмите «Открыть файл»")
+                    .size(14)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(0xab, 0x8a, 0x79)),
+                    })
+            } else {
+                let display_path = std::path::Path::new(&self.file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&self.file_path);
+                text(display_path)
+                    .size(12)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(Color::from_rgb8(0xb1, 0xb6, 0x95)),
+                    })
+            },
         ]
-        .spacing(10)
+        .spacing(15)
         .align_y(Alignment::Center);
 
         let content = column![
