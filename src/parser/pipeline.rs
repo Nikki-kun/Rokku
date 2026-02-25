@@ -16,10 +16,19 @@ pub struct LogRecord {
     pub fields: Map<String, serde_json::Value>,
 }
 
+/// Estimate record count from file size (avg ~50 bytes per message)
+fn estimate_capacity(filename: &str) -> usize {
+    std::fs::metadata(filename)
+        .ok()
+        .map(|m| ((m.len() / 50).min(500_000) as usize).max(1000))
+        .unwrap_or(10_000)
+}
+
 /// Parse ArduPilot Dataflash log file into a vector of log records.
 pub fn parse_log(filename: &str) -> Result<Vec<LogRecord>> {
+    let capacity = estimate_capacity(filename);
     let mut reader = ArduReader::new(filename);
-    let mut records = Vec::new();
+    let mut records = Vec::with_capacity(capacity);
 
     loop {
         match reader.read()? {

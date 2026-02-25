@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs::File, io::Seek};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufReader, Seek},
+};
 
 use anyhow::{anyhow, Context, Result};
 use binrw::{binread, BinRead};
@@ -111,9 +115,11 @@ fn parse_value(
     }
 }
 
+const BUF_SIZE: usize = 256 * 1024; // 256KB buffer for I/O
+
 pub struct ArduReader {
     filename: String,
-    file: Option<File>,
+    file: Option<BufReader<File>>,
     definitions: HashMap<u8, ArduDefinition>,
     last_timestamp: u64,
 }
@@ -146,7 +152,8 @@ impl ArduReader {
 
     pub fn read(&mut self) -> Result<ArduFrame> {
         if self.file.is_none() {
-            self.file = Some(File::open(&self.filename).context("Failed opening file")?);
+            let f = File::open(&self.filename).context("Failed opening file")?;
+            self.file = Some(BufReader::with_capacity(BUF_SIZE, f));
         }
 
         let file = self.file.as_mut().unwrap();
@@ -180,17 +187,16 @@ impl ArduReader {
 
             return Ok(ArduFrame::ArduDefinition(definition));
         } else if let Some(definition) = self.definitions.get(&header.msg_id) {
-            let mut current_ts = 0;
-            let mut json_obj = Map::new();
+            let mut current_ts = 0u64;
+            let n_fields = definition.labels.len();
+            let mut json_obj = Map::with_capacity(n_fields);
 
-            for (idx, c) in definition.ardu_fmt.format_str.chars().enumerate() {
-                let val = parse_value(file, c);
-                let label = definition.labels[idx].clone();
-
-                let val = match val {
+            for (idx, c) in definition.ardu_fmt.format_str.bytes().enumerate() {
+                let c = c as char;
+                let val = match parse_value(file, c) {
                     Ok(v) => v,
                     Err(e) => {
-                        let file_size = file.metadata()?.len();
+                        let file_size = file.get_ref().metadata()?.len();
                         let current_pos = file.stream_position()?;
                         let field_len = field_length(c)?;
 
@@ -205,16 +211,16 @@ impl ArduReader {
                     }
                 };
 
+                let label = definition.labels[idx].clone();
                 if label == "TimeUS" {
-                    if let LogValue::UInt(v) = val {
-                        current_ts = v * 1000;
-                    }
-                    if let LogValue::Int(v) = val {
-                        current_ts = (v as u64) * 1000;
+                    match &val {
+                        LogValue::UInt(v) => current_ts = *v * 1000,
+                        LogValue::Int(v) => current_ts = (*v as u64) * 1000,
+                        _ => {}
                     }
                 }
 
-                json_obj.insert(label.clone(), val.into());
+                json_obj.insert(label, val.into());
             }
 
             if current_ts > 0 {
