@@ -3,9 +3,13 @@ use std::path::PathBuf;
 
 use iced::{event, mouse, window, Subscription, Task};
 
+use crate::config::{self, AppConfig};
 use crate::data::{ParamGroup, ParsedLog};
 use crate::parser::parse_log;
-use crate::ui::{charts_view, loading_view, welcome_view};
+use crate::ui::{
+    charts_view, graph_builder_empty_view, loading_view, section_placeholder_view, settings_view,
+    welcome_view,
+};
 
 const SIDEBAR_WIDTH: f32 = 50.0;
 const SIDEBAR_GAP: f32 = 16.0;
@@ -56,6 +60,11 @@ pub enum Message {
     ParamGroupToggled(String),
     ChartZoom(String, mouse::ScrollDelta),
     SidebarSelected(SidebarItem),
+    SettingsPaletteChanged(String),
+    SettingsServerAddressChanged(String),
+    SettingsStrictTableFileBindingChanged(bool),
+    SettingsMaxChartPointsChanged(String),
+    SaveSettingsFinished(Result<(), String>),
 }
 
 pub struct App {
@@ -73,9 +82,49 @@ pub struct App {
     pub chart_width: f32,
     pub chart_bounds: Option<(f32, f32)>,
     pub active_sidebar: SidebarItem,
+    pub show_welcome: bool,
+    pub settings: AppConfig,
+    pub settings_status: Option<String>,
+    pub max_chart_points_input: String,
 }
 
 impl App {
+    pub fn theme(&self) -> iced::Theme {
+        match self.settings.palette.as_str() {
+            "onedark" => iced::Theme::custom(
+                "One Dark".to_string(),
+                iced::theme::Palette {
+                    background: iced::Color::from_rgb8(0x28, 0x2c, 0x34),
+                    text: iced::Color::from_rgb8(0xab, 0xb2, 0xbf),
+                    primary: iced::Color::from_rgb8(0x61, 0xaf, 0xef),
+                    success: iced::Color::from_rgb8(0x98, 0xc3, 0x79),
+                    danger: iced::Color::from_rgb8(0xe0, 0x6c, 0x75),
+                },
+            ),
+            _ => iced::Theme::custom(
+                "Gruvbox Dark".to_string(),
+                iced::theme::Palette {
+                    background: iced::Color::from_rgb8(0x28, 0x28, 0x28),
+                    text: iced::Color::from_rgb8(0xeb, 0xdb, 0xb2),
+                    primary: iced::Color::from_rgb8(0xd7, 0x99, 0x21),
+                    success: iced::Color::from_rgb8(0x98, 0x97, 0x1a),
+                    danger: iced::Color::from_rgb8(0xcc, 0x24, 0x1d),
+                },
+            ),
+        }
+    }
+
+    fn save_settings_task(settings: AppConfig) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || config::save_config(&settings))
+                    .await
+                    .unwrap_or_else(|e| Err(format!("Ошибка сохранения задачи: {}", e)))
+            },
+            Message::SaveSettingsFinished,
+        )
+    }
+
     fn open_file_picker_task() -> Task<Message> {
         Task::perform(
             async {
@@ -94,6 +143,19 @@ impl App {
     }
 
     pub fn new() -> (Self, Task<Message>) {
+        let (settings, settings_status) = match config::load_config() {
+            Ok(cfg) => (cfg, None),
+            Err(e) => {
+                log::warn!("{}", e);
+                (
+                    AppConfig::default(),
+                    Some(format!("Конфиг не загружен, использованы значения по умолчанию: {}", e)),
+                )
+            }
+        };
+        let mut settings = settings;
+        settings.palette = config::normalize_palette(&settings.palette);
+        let max_chart_points_input = settings.max_chart_points.to_string();
         (
             Self {
                 file_path: String::new(),
@@ -110,6 +172,10 @@ impl App {
                 chart_width: 1200.0,
                 chart_bounds: None,
                 active_sidebar: SidebarItem::GraphBuilder,
+                show_welcome: true,
+                settings,
+                settings_status,
+                max_chart_points_input,
             },
             Task::none(),
         )
@@ -179,16 +245,21 @@ impl App {
     pub fn update(state: &mut App, message: Message) -> Task<Message> {
         match message {
             Message::FileDropped(path) => {
+                state.show_welcome = false;
+                state.active_sidebar = SidebarItem::GraphBuilder;
                 state.is_loading = true;
                 state.load_error = None;
                 App::start_parse(path)
             }
             Message::OpenFilePicker => {
+                state.show_welcome = false;
                 state.active_sidebar = SidebarItem::GraphBuilder;
                 App::open_file_picker_task()
             }
             Message::FileSelected(path) => {
                 if let Some(p) = path {
+                    state.show_welcome = false;
+                    state.active_sidebar = SidebarItem::GraphBuilder;
                     state.is_loading = true;
                     state.load_error = None;
                     App::start_parse(p)
@@ -290,12 +361,52 @@ impl App {
                 Task::none()
             }
             Message::SidebarSelected(item) => {
+                state.show_welcome = false;
                 state.active_sidebar = item;
-                if item == SidebarItem::GraphBuilder {
-                    App::open_file_picker_task()
+                Task::none()
+            }
+            Message::SettingsPaletteChanged(value) => {
+                state.settings.palette = config::normalize_palette(&value);
+                App::save_settings_task(state.settings.clone())
+            }
+            Message::SettingsServerAddressChanged(value) => {
+                state.settings.server_address = value;
+                App::save_settings_task(state.settings.clone())
+            }
+            Message::SettingsStrictTableFileBindingChanged(value) => {
+                state.settings.strict_table_file_binding = value;
+                App::save_settings_task(state.settings.clone())
+            }
+            Message::SettingsMaxChartPointsChanged(value) => {
+                state.max_chart_points_input = value;
+                let parsed_points = state
+                    .max_chart_points_input
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|v| *v >= 10 && *v <= 100_000);
+                if let Some(parsed_points) = parsed_points {
+                    state.settings.max_chart_points = parsed_points;
+                    state.settings_status = None;
+                    App::save_settings_task(state.settings.clone())
                 } else {
+                    state.settings_status =
+                        Some("MAX_CHART_POINTS должен быть числом от 10 до 100000".to_string());
                     Task::none()
                 }
+            }
+            Message::SaveSettingsFinished(result) => {
+                match result {
+                    Ok(()) => {
+                        let path = config::config_path();
+                        state.settings_status =
+                            Some(format!("Настройки сохранены: {}", path.display()));
+                    }
+                    Err(e) => {
+                        state.settings_status = Some(e);
+                    }
+                }
+                Task::none()
             }
         }
     }
@@ -304,9 +415,20 @@ impl App {
         if self.is_loading {
             return loading_view(self);
         }
-        if self.records.is_none() {
+        if self.show_welcome {
             return welcome_view(self);
         }
-        charts_view(self)
+        match self.active_sidebar {
+            SidebarItem::GraphBuilder => {
+                if self.records.is_none() {
+                    graph_builder_empty_view(self)
+                } else {
+                    charts_view(self)
+                }
+            }
+            SidebarItem::Table => section_placeholder_view(self, "Таблица"),
+            SidebarItem::Profile => section_placeholder_view(self, "Профиль"),
+            SidebarItem::Settings => settings_view(self),
+        }
     }
 }

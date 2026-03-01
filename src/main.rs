@@ -5,6 +5,7 @@
 
 mod app;
 mod chart;
+mod config;
 mod data;
 mod parser;
 mod ui;
@@ -21,7 +22,7 @@ fn main() -> iced::Result {
         app::App::view,
     )
     .font(iced_fonts::NERD_FONT_BYTES)
-    .theme(|_| iced::Theme::Ferra)
+    .theme(app::App::theme)
     .subscription(app::App::subscription)
     .antialiasing(true)
     .run_with(app::App::new)

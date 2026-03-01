@@ -1,8 +1,7 @@
 use iced::{
-    Background, Color,
     widget::{
-        button, column, mouse_area, row, text, text_input, tooltip, Column, Container, Scrollable,
-        Space,
+        button, checkbox, column, mouse_area, pick_list, row, text, text_input, tooltip, Column,
+        Container, Scrollable, Space,
     },
     Alignment, Element, Length, Point,
 };
@@ -13,8 +12,10 @@ use crate::app::{App, Message, SidebarItem};
 use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
 use crate::data::pad_series_from_zero;
 use crate::ui::{
-    chart_card_container, chart_remove_button, drop_zone_container, ferra_container, ferra_text,
-    param_add_button, param_add_disabled, param_icon_button, params_panel_container, FERRA_ACCENT,
+    chart_card_container, chart_remove_button, drop_zone_container, nav_icon_button,
+    param_add_button, param_add_disabled, param_icon_button, params_panel_container,
+    themed_container, themed_text, ACCENT_COLOR, TEXT_DIM, TEXT_ERROR, TEXT_HIGHLIGHT, TEXT_INFO,
+    TEXT_MUTED, TEXT_PRIMARY,
 };
 
 fn persistent_sidebar(app: &App) -> Element<'_, Message> {
@@ -24,24 +25,19 @@ fn persistent_sidebar(app: &App) -> Element<'_, Message> {
             text(iced_fonts::nerd::icon_to_string(icon))
                 .font(NERD_FONT)
                 .size(20)
-                .style(move |_| {
+                .style(move |theme| {
                     if is_active {
-                        ferra_text(FERRA_ACCENT)
+                        themed_text(theme, ACCENT_COLOR)
                     } else {
-                        ferra_text((0xab, 0x8a, 0x79))
+                        themed_text(theme, TEXT_MUTED)
                     }
                 }),
         )
-        .on_press(if item == SidebarItem::GraphBuilder {
-            Message::OpenFilePicker
-        } else {
-            Message::SidebarSelected(item)
-        })
+        .on_press(Message::SidebarSelected(item))
         .style(move |theme: &iced::Theme, status| {
-            let mut style = param_icon_button(theme, status);
-            if is_active {
-                style.background = Some(Background::Color(Color::from_rgb8(0x2a, 0x28, 0x2c)));
-                style.text_color = Color::from_rgb8(0xe8, 0xdc, 0xa8);
+            let mut style = nav_icon_button(theme, status);
+            if is_active && status == button::Status::Active {
+                style.background = None;
             }
             style
         })
@@ -80,7 +76,7 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
     if app.active_charts.is_empty() {
         return text("Добавьте графики")
             .size(11)
-            .style(|_| ferra_text((0x68, 0x56, 0x50)))
+            .style(|theme| themed_text(theme, TEXT_DIM))
             .into();
     }
 
@@ -94,11 +90,11 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
             row![
                 text(param.as_str())
                     .size(11)
-                    .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+                    .style(|theme| themed_text(theme, TEXT_PRIMARY)),
                 Space::with_width(12),
                 text(val_str)
                     .size(11)
-                    .style(|_| ferra_text((0xb1, 0xb6, 0x95))),
+                    .style(|theme| themed_text(theme, TEXT_INFO)),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -109,71 +105,35 @@ pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
         column![
             text(format!("{:.2}s", cursor / 1000.0))
                 .size(11)
-                .style(|_| ferra_text(FERRA_ACCENT)),
+                .style(|theme| themed_text(theme, ACCENT_COLOR)),
             Space::with_height(4),
             rows,
         ]
         .spacing(2)
         .padding(10),
     )
-    .style(ferra_container)
+    .style(themed_container)
     .into()
 }
 
 pub fn welcome_view(app: &App) -> Element<'_, Message> {
-    let drop_zone = mouse_area(
-        Container::new(
-            column![
-                to_text(Nerd::Folder)
-                    .size(48)
-                    .style(|_| ferra_text((0x5d, 0xc1, 0xc5))),
-                Space::with_height(12),
-                text("Перетащите .bin или .ulg файл сюда")
-                    .size(16)
-                    .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
-                text("или нажмите иконку графика слева")
-                    .size(13)
-                    .style(|_| ferra_text((0xab, 0x8a, 0x79))),
-            ]
-            .spacing(4)
-            .align_x(Alignment::Center)
-            .padding(40),
-        )
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .style(drop_zone_container),
-    );
-
-    let error_block: Element<Message> = if let Some(ref err) = app.load_error {
-        column![
-            text("Ошибка загрузки:")
-                .size(12)
-                .style(|_| ferra_text((0xe0, 0x6b, 0x75))),
-            text(err.as_str())
-                .size(12)
-                .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
-        ]
-        .spacing(4)
-        .into()
-    } else {
-        text("").into()
-    };
-
     let welcome_content = column![
         Space::with_height(Length::FillPortion(2)),
-        text("Rokku").size(42).style(|_| ferra_text(FERRA_ACCENT)),
+        text("Rokku")
+            .size(42)
+            .style(|theme| themed_text(theme, ACCENT_COLOR)),
         text("Просмотрщик логов ArduPilot")
             .size(16)
-            .style(|_| ferra_text((0xab, 0x8a, 0x79))),
+            .style(|theme| themed_text(theme, TEXT_MUTED)),
         Space::with_height(8),
         text("Загрузите Dataflash лог для анализа полёта")
             .size(13)
-            .style(|_| ferra_text((0x68, 0x56, 0x50))),
-        Space::with_height(8),
-        error_block,
-        Space::with_height(Length::FillPortion(2)),
-        drop_zone,
-        Space::with_height(30),
+            .style(|theme| themed_text(theme, TEXT_DIM)),
+        Space::with_height(20),
+        button("Открыть графопостроитель")
+            .on_press(Message::SidebarSelected(SidebarItem::GraphBuilder))
+            .style(button::secondary),
+        Space::with_height(Length::FillPortion(3)),
     ]
     .spacing(4)
     .align_x(Alignment::Center)
@@ -187,7 +147,77 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
         Container::new(welcome_content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(ferra_container)
+            .style(themed_container)
+    ]
+    .spacing(0)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+pub fn graph_builder_empty_view(app: &App) -> Element<'_, Message> {
+    let drop_zone = mouse_area(
+        Container::new(
+            column![
+                to_text(Nerd::Folder)
+                    .size(48)
+                    .style(|theme| themed_text(theme, TEXT_HIGHLIGHT)),
+                Space::with_height(12),
+                text("Перетащите .bin или .ulg файл сюда")
+                    .size(16)
+                    .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+                text("или нажмите для выбора файла")
+                    .size(13)
+                    .style(|theme| themed_text(theme, TEXT_MUTED)),
+            ]
+            .spacing(4)
+            .align_x(Alignment::Center)
+            .padding(40),
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .style(drop_zone_container),
+    )
+    .on_press(Message::OpenFilePicker)
+    .interaction(iced::mouse::Interaction::Pointer);
+
+    let error_block: Element<Message> = if let Some(ref err) = app.load_error {
+        column![
+            text("Ошибка загрузки:")
+                .size(12)
+                .style(|theme| themed_text(theme, TEXT_ERROR)),
+            text(err.as_str())
+                .size(12)
+                .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        ]
+        .spacing(4)
+        .into()
+    } else {
+        text("").into()
+    };
+
+    let content = column![
+        text("Графопостроитель")
+            .size(24)
+            .style(|theme| themed_text(theme, ACCENT_COLOR)),
+        Space::with_height(8),
+        error_block,
+        Space::with_height(20),
+        drop_zone,
+    ]
+    .spacing(4)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(24);
+
+    row![
+        persistent_sidebar(app),
+        Space::with_width(16),
+        Container::new(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(themed_container)
     ]
     .spacing(0)
     .padding(12)
@@ -199,15 +229,17 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
 pub fn loading_view(app: &App) -> Element<'_, Message> {
     let content = column![
         Space::with_height(Length::Fill),
-        text("Rokku").size(36).style(|_| ferra_text(FERRA_ACCENT)),
+        text("Rokku")
+            .size(36)
+            .style(|theme| themed_text(theme, ACCENT_COLOR)),
         Space::with_height(24),
         text("Загрузка и парсинг лога...")
             .size(16)
-            .style(|_| ferra_text((0x5d, 0xc1, 0xc5))),
+            .style(|theme| themed_text(theme, TEXT_HIGHLIGHT)),
         Space::with_height(8),
         text("Пожалуйста, подождите")
             .size(13)
-            .style(|_| ferra_text((0xab, 0x8a, 0x79))),
+            .style(|theme| themed_text(theme, TEXT_MUTED)),
         Space::with_height(Length::Fill),
     ]
     .spacing(4)
@@ -221,7 +253,7 @@ pub fn loading_view(app: &App) -> Element<'_, Message> {
         Container::new(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(ferra_container)
+            .style(themed_container)
     ]
     .spacing(0)
     .padding(12)
@@ -231,22 +263,38 @@ pub fn loading_view(app: &App) -> Element<'_, Message> {
 }
 
 pub fn charts_view(app: &App) -> Element<'_, Message> {
-    let controls = row![{
-        let display_path = std::path::Path::new(&app.file_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&app.file_path);
+    let display_path = std::path::Path::new(&app.file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&app.file_path);
+    let controls = row![
         text(format!("Файл: {}", display_path))
             .size(13)
-            .style(|_| ferra_text((0xb1, 0xb6, 0x95)))
-    },]
+            .style(|theme| themed_text(theme, ACCENT_COLOR)),
+        Space::with_width(12),
+        button(
+            row![
+                text(iced_fonts::nerd::icon_to_string(Nerd::FolderOpen))
+                    .font(NERD_FONT)
+                    .size(12),
+                text("Открыть другой лог").size(12),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::OpenFilePicker)
+        .style(param_icon_button)
+        .padding([4, 8]),
+    ]
     .spacing(8)
     .align_y(Alignment::Center);
 
     let content = column![
         controls,
         if let Some(ref err) = app.load_error {
-            text(err).size(14).style(|_| ferra_text((0xe0, 0x6b, 0x75)))
+            text(err)
+                .size(14)
+                .style(|theme| themed_text(theme, TEXT_ERROR))
         } else {
             text("")
         },
@@ -256,7 +304,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
     let params_list: Element<Message> = if app.parameter_groups.is_empty() {
         text("Параметры появятся после загрузки лога")
             .size(14)
-            .style(|_| ferra_text((0xab, 0x8a, 0x79)))
+            .style(|theme| themed_text(theme, TEXT_MUTED))
             .into()
     } else {
         let search_lower = app.param_search.to_lowercase();
@@ -290,7 +338,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                     .padding([4, 6]),
                     text(&group.name)
                         .size(13)
-                        .style(|_| ferra_text(FERRA_ACCENT)),
+                        .style(|theme| themed_text(theme, ACCENT_COLOR)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center)
@@ -327,7 +375,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                             .padding([4, 6]),
                             text(param.clone())
                                 .size(12)
-                                .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
+                                .style(|theme| themed_text(theme, TEXT_PRIMARY)),
                         ]
                         .spacing(8)
                         .align_y(Alignment::Center)
@@ -347,7 +395,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             if app.active_charts.is_empty() {
                 text("Нажмите + у параметра слева, чтобы добавить график")
                     .size(14)
-                    .style(|_| ferra_text((0xab, 0x8a, 0x79)))
+                    .style(|theme| themed_text(theme, TEXT_MUTED))
                     .into()
             } else {
                 let (min_ts, max_ts) = records.time_range();
@@ -366,6 +414,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                             idx,
                             app.cursor_time,
                             zoom_range,
+                            app.settings.max_chart_points,
                         );
                         let param_clone = param.clone();
                         let i = idx;
@@ -436,7 +485,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
         } else {
             text("Загрузите ArduPilot (.bin) или PX4 ULog (.ulg) для просмотра")
                 .size(16)
-                .style(|_| ferra_text((0xab, 0x8a, 0x79)))
+                .style(|theme| themed_text(theme, TEXT_MUTED))
                 .into()
         };
 
@@ -444,7 +493,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
         column![
             text(format!("Графики ({})", app.active_charts.len()))
                 .size(17)
-                .style(|_| ferra_text(FERRA_ACCENT)),
+                .style(|theme| themed_text(theme, ACCENT_COLOR)),
             Space::with_height(12),
             charts_section,
         ]
@@ -507,7 +556,93 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
         Container::new(main_content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(ferra_container)
+            .style(themed_container)
+    ]
+    .spacing(0)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+pub fn section_placeholder_view<'a>(app: &'a App, title: &'a str) -> Element<'a, Message> {
+    let content = column![
+        text(title)
+            .size(26)
+            .style(|theme| themed_text(theme, ACCENT_COLOR)),
+        Space::with_height(10),
+        text("Раздел в разработке")
+            .size(13)
+            .style(|theme| themed_text(theme, TEXT_MUTED)),
+    ]
+    .align_x(Alignment::Center)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(24);
+
+    row![
+        persistent_sidebar(app),
+        Space::with_width(16),
+        Container::new(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(themed_container)
+    ]
+    .spacing(0)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+pub fn settings_view(app: &App) -> Element<'_, Message> {
+    let content = column![
+        text("Настройки")
+            .size(26)
+            .style(|theme| themed_text(theme, ACCENT_COLOR)),
+        Space::with_height(16),
+        text("Цветовая палитра")
+            .size(13)
+            .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        pick_list(
+            crate::config::AVAILABLE_PALETTES,
+            Some(app.settings.palette.as_str()),
+            |palette| Message::SettingsPaletteChanged(palette.to_string()),
+        )
+        .placeholder("Выберите палитру"),
+        Space::with_height(10),
+        text("Адрес сервера")
+            .size(13)
+            .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        text_input("http://127.0.0.1:8080", &app.settings.server_address)
+            .on_input(Message::SettingsServerAddressChanged)
+            .padding(8),
+        Space::with_height(10),
+        checkbox(
+            "Жесткая привязка файлов для таблицы",
+            app.settings.strict_table_file_binding
+        )
+        .on_toggle(Message::SettingsStrictTableFileBindingChanged),
+        Space::with_height(10),
+        text("MAX_CHART_POINTS (10..100000)")
+            .size(13)
+            .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        text_input("250", &app.max_chart_points_input)
+            .on_input(Message::SettingsMaxChartPointsChanged)
+            .padding(8),
+    ]
+    .spacing(4)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(24);
+
+    row![
+        persistent_sidebar(app),
+        Space::with_width(16),
+        Container::new(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(themed_container)
     ]
     .spacing(0)
     .padding(12)

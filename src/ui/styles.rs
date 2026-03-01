@@ -1,13 +1,27 @@
 use iced::widget::{button, container};
 use iced::{Color as IcedColor, Theme};
 
-pub fn ferra_container(_theme: &Theme) -> container::Style {
+// Gruvbox dark: bright_yellow
+pub const ACCENT_COLOR: (u8, u8, u8) = (0xfa, 0xbd, 0x2f);
+// Gruvbox dark: gray_245
+pub const TEXT_MUTED: (u8, u8, u8) = (0x92, 0x83, 0x74);
+// Gruvbox dark: dark4
+pub const TEXT_DIM: (u8, u8, u8) = (0x7c, 0x6f, 0x64);
+// Gruvbox dark: light1
+pub const TEXT_PRIMARY: (u8, u8, u8) = (0xeb, 0xdb, 0xb2);
+// Gruvbox dark: bright_green
+pub const TEXT_INFO: (u8, u8, u8) = (0xb8, 0xbb, 0x26);
+// Gruvbox dark: bright_blue
+pub const TEXT_HIGHLIGHT: (u8, u8, u8) = (0x83, 0xa5, 0x98);
+// Gruvbox dark: bright_red
+pub const TEXT_ERROR: (u8, u8, u8) = (0xfb, 0x49, 0x34);
+
+pub fn themed_container(_theme: &Theme) -> container::Style {
+    let palette = _theme.extended_palette();
     container::Style {
-        background: Some(iced::Background::Color(IcedColor::from_rgb8(
-            0x24, 0x22, 0x26,
-        ))),
+        background: Some(iced::Background::Color(palette.background.base.color)),
         border: iced::Border {
-            color: IcedColor::from_rgb8(0x4f, 0x47, 0x4d),
+            color: palette.background.strong.color,
             width: 1.0,
             radius: 4.0.into(),
         },
@@ -16,13 +30,12 @@ pub fn ferra_container(_theme: &Theme) -> container::Style {
 }
 
 pub fn drop_zone_container(_theme: &Theme) -> container::Style {
+    let palette = _theme.extended_palette();
     container::Style {
-        background: Some(iced::Background::Color(IcedColor::from_rgb8(
-            0x1e, 0x1c, 0x20,
-        ))),
+        background: None,
         border: iced::Border {
-            color: IcedColor::from_rgb8(0x5d, 0xc1, 0xc5),
-            width: 2.0,
+            color: palette.primary.base.color.scale_alpha(0.4),
+            width: 1.0,
             radius: 12.0.into(),
         },
         ..Default::default()
@@ -30,12 +43,11 @@ pub fn drop_zone_container(_theme: &Theme) -> container::Style {
 }
 
 pub fn chart_card_container(_theme: &Theme) -> container::Style {
+    let palette = _theme.extended_palette();
     container::Style {
-        background: Some(iced::Background::Color(IcedColor::from_rgb8(
-            0x1a, 0x18, 0x1c,
-        ))),
+        background: None,
         border: iced::Border {
-            color: IcedColor::from_rgb8(0x3d, 0x3a, 0x40),
+            color: palette.background.strong.color,
             width: 1.0,
             radius: 10.0.into(),
         },
@@ -44,12 +56,11 @@ pub fn chart_card_container(_theme: &Theme) -> container::Style {
 }
 
 pub fn params_panel_container(_theme: &Theme) -> container::Style {
+    let palette = _theme.extended_palette();
     container::Style {
-        background: Some(iced::Background::Color(IcedColor::from_rgb8(
-            0x1e, 0x1c, 0x20,
-        ))),
+        background: None,
         border: iced::Border {
-            color: IcedColor::from_rgb8(0x3d, 0x3a, 0x40),
+            color: palette.background.strong.color,
             width: 1.0,
             radius: 10.0.into(),
         },
@@ -57,37 +68,67 @@ pub fn params_panel_container(_theme: &Theme) -> container::Style {
     }
 }
 
-pub fn ferra_text(color: (u8, u8, u8)) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(IcedColor::from_rgb8(color.0, color.1, color.2)),
+pub fn themed_text(theme: &Theme, color: (u8, u8, u8)) -> iced::widget::text::Style {
+    let palette = theme.extended_palette();
+    let mapped = match color {
+        ACCENT_COLOR => palette.primary.strong.color,
+        TEXT_MUTED => palette.background.base.text.scale_alpha(0.78),
+        TEXT_DIM => palette.background.base.text.scale_alpha(0.58),
+        TEXT_PRIMARY => palette.background.base.text,
+        TEXT_INFO => palette.secondary.base.color,
+        TEXT_HIGHLIGHT => palette.primary.base.color,
+        TEXT_ERROR => palette.danger.base.color,
+        _ => IcedColor::from_rgb8(color.0, color.1, color.2),
+    };
+    iced::widget::text::Style { color: Some(mapped) }
+}
+
+pub fn nav_icon_button(_theme: &Theme, status: button::Status) -> button::Style {
+    let palette = _theme.extended_palette();
+    let text_color = palette.background.base.text.scale_alpha(0.6);
+    let (border_color, text_color) = match status {
+        button::Status::Hovered => (
+            palette.background.strong.color,
+            palette.background.base.text,
+        ),
+        button::Status::Pressed => (
+            palette.primary.base.color,
+            palette.primary.strong.color,
+        ),
+        _ => (IcedColor::TRANSPARENT, text_color),
+    };
+    button::Style {
+        background: None,
+        text_color,
+        border: iced::Border {
+            color: border_color,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        shadow: iced::Shadow::default(),
     }
 }
 
-pub const FERRA_ACCENT: (u8, u8, u8) = (0xe8, 0xdc, 0xa8);
-
 pub fn param_icon_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let text_color = IcedColor::from_rgb8(0xab, 0x8a, 0x79);
-    let (background, text_color) = match status {
+    let palette = _theme.extended_palette();
+    let text_color = palette.background.base.text.scale_alpha(0.7);
+    let (border_color, text_color) = match status {
         button::Status::Hovered => (
-            Some(iced::Background::Color(IcedColor::from_rgb8(
-                0x2a, 0x28, 0x2c,
-            ))),
-            IcedColor::from_rgb8(0xe8, 0xdc, 0xa8),
+            palette.background.strong.color,
+            palette.background.base.text,
         ),
         button::Status::Pressed => (
-            Some(iced::Background::Color(IcedColor::from_rgb8(
-                0x32, 0x30, 0x34,
-            ))),
-            IcedColor::from_rgb8(0xe8, 0xdc, 0xa8),
+            palette.primary.base.color,
+            palette.primary.strong.color,
         ),
-        _ => (None, text_color),
+        _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {
-        background,
+        background: None,
         text_color,
         border: iced::Border {
-            color: IcedColor::TRANSPARENT,
-            width: 0.0,
+            color: border_color,
+            width: 1.0,
             radius: 6.0.into(),
         },
         shadow: iced::Shadow::default(),
@@ -95,28 +136,25 @@ pub fn param_icon_button(_theme: &Theme, status: button::Status) -> button::Styl
 }
 
 pub fn param_add_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let text_color = IcedColor::from_rgb8(0x5d, 0xc1, 0xc5);
-    let (background, text_color) = match status {
+    let palette = _theme.extended_palette();
+    let text_color = palette.primary.base.color;
+    let (border_color, text_color) = match status {
         button::Status::Hovered => (
-            Some(iced::Background::Color(IcedColor::from_rgb8(
-                0x2a, 0x38, 0x3a,
-            ))),
-            IcedColor::from_rgb8(0x7d, 0xe1, 0xe5),
+            palette.primary.base.color.scale_alpha(0.5),
+            palette.primary.strong.color,
         ),
         button::Status::Pressed => (
-            Some(iced::Background::Color(IcedColor::from_rgb8(
-                0x32, 0x40, 0x42,
-            ))),
-            IcedColor::from_rgb8(0x7d, 0xe1, 0xe5),
+            palette.primary.strong.color,
+            palette.primary.strong.color,
         ),
-        _ => (None, text_color),
+        _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {
-        background,
+        background: None,
         text_color,
         border: iced::Border {
-            color: IcedColor::TRANSPARENT,
-            width: 0.0,
+            color: border_color,
+            width: 1.0,
             radius: 6.0.into(),
         },
         shadow: iced::Shadow::default(),
@@ -124,28 +162,25 @@ pub fn param_add_button(_theme: &Theme, status: button::Status) -> button::Style
 }
 
 pub fn chart_remove_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let text_color = IcedColor::from_rgb8(0xe0, 0x6b, 0x75);
-    let (background, text_color) = match status {
+    let palette = _theme.extended_palette();
+    let text_color = palette.danger.base.color;
+    let (border_color, text_color) = match status {
         button::Status::Hovered => (
-            Some(iced::Background::Color(IcedColor::from_rgb8(
-                0x3a, 0x28, 0x2a,
-            ))),
-            IcedColor::from_rgb8(0xff, 0x8b, 0x95),
+            palette.danger.base.color.scale_alpha(0.5),
+            palette.danger.strong.color,
         ),
         button::Status::Pressed => (
-            Some(iced::Background::Color(IcedColor::from_rgb8(
-                0x42, 0x30, 0x32,
-            ))),
-            IcedColor::from_rgb8(0xff, 0x8b, 0x95),
+            palette.danger.strong.color,
+            palette.danger.strong.color,
         ),
-        _ => (None, text_color),
+        _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {
-        background,
+        background: None,
         text_color,
         border: iced::Border {
-            color: IcedColor::TRANSPARENT,
-            width: 0.0,
+            color: border_color,
+            width: 1.0,
             radius: 6.0.into(),
         },
         shadow: iced::Shadow::default(),
@@ -153,9 +188,10 @@ pub fn chart_remove_button(_theme: &Theme, status: button::Status) -> button::St
 }
 
 pub fn param_add_disabled(_theme: &Theme, _status: button::Status) -> button::Style {
+    let palette = _theme.extended_palette();
     button::Style {
         background: None,
-        text_color: IcedColor::from_rgb8(0x68, 0x56, 0x50),
+        text_color: palette.background.strong.color,
         border: iced::Border {
             color: IcedColor::TRANSPARENT,
             width: 0.0,

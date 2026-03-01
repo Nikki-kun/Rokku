@@ -5,19 +5,21 @@ use plotters_backend::DrawingBackend;
 use plotters_iced::Chart;
 
 use crate::app::Message;
-use crate::data::{downsample_series, filter_series_to_range, MAX_CHART_POINTS};
+use crate::data::{downsample_series, filter_series_to_range};
 
 pub const CHART_PLOT_LEFT: f32 = 65.0;
 pub const CHART_PLOT_RIGHT: f32 = 15.0;
 
-const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
-const FERRA_LABEL: RGBColor = RGBColor(0xab, 0x8a, 0x79);
+// Gruvbox dark2
+const CHART_GRID: RGBColor = RGBColor(0x50, 0x49, 0x45);
+// Gruvbox gray_245
+const CHART_LABEL: RGBColor = RGBColor(0x92, 0x83, 0x74);
 const CHART_COLORS: [RGBColor; 5] = [
-    RGBColor(0x5d, 0xc1, 0xc5),
-    RGBColor(0xf6, 0xb6, 0xc9),
-    RGBColor(0xb1, 0xb6, 0x95),
-    RGBColor(0xff, 0xa0, 0x7a),
-    RGBColor(0xd7, 0xbd, 0xe2),
+    RGBColor(0x83, 0xa5, 0x98), // bright_blue
+    RGBColor(0xd3, 0x86, 0x9b), // bright_purple
+    RGBColor(0xb8, 0xbb, 0x26), // bright_green
+    RGBColor(0xfe, 0x80, 0x19), // bright_orange
+    RGBColor(0x8e, 0xc0, 0x7c), // bright_aqua
 ];
 
 pub fn format_axis_value(v: f64) -> String {
@@ -25,7 +27,8 @@ pub fn format_axis_value(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-const CURSOR_LINE_COLOR: RGBColor = RGBColor(0xe8, 0xdc, 0xa8);
+// Gruvbox bright_yellow
+const CURSOR_LINE_COLOR: RGBColor = RGBColor(0xfa, 0xbd, 0x2f);
 
 pub struct LogChart {
     data: Vec<(f64, f64)>,
@@ -41,13 +44,15 @@ impl LogChart {
         color_idx: usize,
         cursor_time: Option<f64>,
         x_range: Option<(f64, f64)>,
+        max_chart_points: usize,
     ) -> Self {
+        let max_chart_points = max_chart_points.clamp(10, 100_000);
         let data = match x_range {
             Some((range_start, range_end)) => {
                 let filtered = filter_series_to_range(&data, range_start, range_end);
-                downsample_series(&filtered, MAX_CHART_POINTS)
+                downsample_series(&filtered, max_chart_points)
             }
-            None => downsample_series(&data, MAX_CHART_POINTS),
+            None => downsample_series(&data, max_chart_points),
         };
         Self {
             data,
@@ -99,12 +104,12 @@ impl Chart<Message> for LogChart {
             .build_cartesian_2d(min_ts..max_ts, val_range)
             .expect("build chart");
 
-        let label_style = ("sans-serif", 11).into_font().color(&FERRA_LABEL);
+        let label_style = ("sans-serif", 11).into_font().color(&CHART_LABEL);
         chart
             .configure_mesh()
-            .light_line_style(FERRA_GRID.mix(0.15))
-            .bold_line_style(FERRA_GRID.mix(0.35))
-            .axis_style(ShapeStyle::from(&FERRA_LABEL.mix(0.8)).stroke_width(1))
+            .light_line_style(CHART_GRID.mix(0.15))
+            .bold_line_style(CHART_GRID.mix(0.35))
+            .axis_style(ShapeStyle::from(&CHART_LABEL.mix(0.8)).stroke_width(1))
             .label_style(label_style)
             .x_label_formatter(&|v| format!("{:.1}s", v / 1000.0))
             .y_label_formatter(&|v| format_axis_value(*v))

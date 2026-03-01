@@ -18,3 +18,4 @@ plotters-backend = "0.3"
 rfd = { version = "0.14", default-features = false, features = ["gtk3"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 iced_fonts = { version = "0.2", features = ["nerd"] }
+toml = "0.9"
