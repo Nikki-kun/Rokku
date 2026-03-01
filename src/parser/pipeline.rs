@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::Result;
 
-use crate::data::{is_timestamp_field, ParamGroup, ParsedLog};
+use crate::data::{is_timestamp_field, LogInfoEntry, LogInfoKind, ParamGroup, ParsedLog};
 
-use super::reader::{ArduFrame, ArduReader};
+use super::reader::{ArduFrame, ArduReader, LogValue};
 use super::ulog;
 
 fn is_ulog_file(filename: &str) -> bool {
@@ -14,7 +14,10 @@ fn is_ulog_file(filename: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn finish_parsed_log(mut series: HashMap<String, Vec<(u64, f64)>>) -> ParsedLog {
+fn finish_parsed_log(
+    mut series: HashMap<String, Vec<(u64, f64)>>,
+    mut info_entries: Vec<LogInfoEntry>,
+) -> ParsedLog {
     let mut min_ns = u64::MAX;
     let mut max_ns = 0u64;
 
@@ -56,11 +59,24 @@ fn finish_parsed_log(mut series: HashMap<String, Vec<(u64, f64)>>) -> ParsedLog 
         })
         .collect();
 
+    info_entries.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
+
     ParsedLog {
         series,
         time_range,
         parameters,
         parameter_groups,
+        info_entries,
+    }
+}
+
+fn log_value_to_text(value: &LogValue) -> String {
+    match value {
+        LogValue::Int(v) => v.to_string(),
+        LogValue::UInt(v) => v.to_string(),
+        LogValue::Float(v) => format!("{:.6}", v),
+        LogValue::Double(v) => format!("{:.6}", v),
+        LogValue::Str(v) => v.clone(),
     }
 }
 
@@ -71,19 +87,45 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
     log::debug!("Parsing ArduPilot log: {}", filename);
     let mut reader = ArduReader::new(filename);
     let mut series: HashMap<String, Vec<(u64, f64)>> = HashMap::new();
+    let mut discovered_types: BTreeSet<String> = BTreeSet::new();
+    let mut parm_values: BTreeMap<String, String> = BTreeMap::new();
     let mut total_points = 0usize;
 
     loop {
         match reader.read()? {
             ArduFrame::Eof => break,
-            ArduFrame::ArduDefinition(_) => {}
+            ArduFrame::ArduDefinition(definition) => {
+                discovered_types.insert(definition.name.to_string());
+            }
             ArduFrame::ArduMessage(message) => {
                 let definition = reader
                     .get_definition(&message.type_id)
                     .ok_or_else(|| anyhow::anyhow!("Unknown type_id {}", message.type_id))?;
                 let msg_type = definition.name.as_ref();
+                let fields = message.fields;
 
-                for (label, val) in message.fields {
+                if msg_type == "PARM" {
+                    let mut parm_name: Option<String> = None;
+                    let mut parm_value: Option<String> = None;
+
+                    for (label, val) in &fields {
+                        if label == "Name" {
+                            if let LogValue::Str(v) = val {
+                                if !v.is_empty() {
+                                    parm_name = Some(v.clone());
+                                }
+                            }
+                        } else if label == "Value" {
+                            parm_value = Some(log_value_to_text(val));
+                        }
+                    }
+
+                    if let (Some(name), Some(value)) = (parm_name, parm_value) {
+                        parm_values.insert(name, value);
+                    }
+                }
+
+                for (label, val) in fields {
                     if is_timestamp_field(&label) {
                         continue;
                     }
@@ -102,7 +144,27 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
         total_points,
         series.len()
     );
-    Ok(finish_parsed_log(series))
+
+    let mut info_entries = Vec::new();
+    info_entries.push(LogInfoEntry {
+        kind: LogInfoKind::Metadata,
+        name: "log.format".to_string(),
+        value: "ArduPilot Dataflash".to_string(),
+    });
+    info_entries.push(LogInfoEntry {
+        kind: LogInfoKind::Metadata,
+        name: "messages.defined_types".to_string(),
+        value: discovered_types.len().to_string(),
+    });
+    for (name, value) in parm_values {
+        info_entries.push(LogInfoEntry {
+            kind: LogInfoKind::Parameter,
+            name,
+            value,
+        });
+    }
+
+    Ok(finish_parsed_log(series, info_entries))
 }
 
 #[cfg(test)]

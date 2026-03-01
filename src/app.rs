@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use iced::{event, mouse, window, Subscription, Task};
 
 use crate::config::{self, AppConfig};
-use crate::data::{ParamGroup, ParsedLog};
+use crate::data::{LogInfoEntry, ParamGroup, ParsedLog};
 use crate::parser::parse_log;
 use crate::ui::{
     charts_view, graph_builder_empty_view, loading_view, section_placeholder_view, settings_view,
@@ -62,6 +62,8 @@ pub enum Message {
     ChartPanStart(String),
     ChartPanMove(String, f64, f32),
     ChartPanEnd,
+    ToggleLogInfo,
+    LogInfoSearchChanged(String),
     SidebarSelected(SidebarItem),
     SettingsPaletteChanged(String),
     SettingsServerAddressChanged(String),
@@ -87,6 +89,9 @@ pub struct App {
     pub chart_bounds: Option<(f32, f32)>,
     pub active_sidebar: SidebarItem,
     pub show_welcome: bool,
+    pub show_log_info: bool,
+    pub log_info_entries: Vec<LogInfoEntry>,
+    pub log_info_search: String,
     pub settings: AppConfig,
     pub settings_status: Option<String>,
     pub max_chart_points_input: String,
@@ -178,6 +183,9 @@ impl App {
                 chart_bounds: None,
                 active_sidebar: SidebarItem::GraphBuilder,
                 show_welcome: true,
+                show_log_info: false,
+                log_info_entries: Vec::new(),
+                log_info_search: String::new(),
                 settings,
                 settings_status,
                 max_chart_points_input,
@@ -208,6 +216,13 @@ impl App {
                 self.parameters = records.parameters().to_vec();
                 self.parameter_groups = records.parameter_groups().to_vec();
                 self.records = Some(records);
+                self.log_info_entries = self
+                    .records
+                    .as_ref()
+                    .map(|r| r.info_entries().to_vec())
+                    .unwrap_or_default();
+                self.show_log_info = false;
+                self.log_info_search.clear();
                 self.load_error = None;
                 self.active_charts.clear();
                 self.chart_zoom.clear();
@@ -229,6 +244,9 @@ impl App {
                 self.active_charts.clear();
                 self.chart_zoom.clear();
                 self.chart_pan_state = None;
+                self.log_info_entries.clear();
+                self.show_log_info = false;
+                self.log_info_search.clear();
             }
         }
     }
@@ -409,6 +427,17 @@ impl App {
             }
             Message::ChartPanEnd => {
                 state.chart_pan_state = None;
+                Task::none()
+            }
+            Message::ToggleLogInfo => {
+                state.show_log_info = !state.show_log_info;
+                if !state.show_log_info {
+                    state.log_info_search.clear();
+                }
+                Task::none()
+            }
+            Message::LogInfoSearchChanged(value) => {
+                state.log_info_search = value;
                 Task::none()
             }
             Message::SidebarSelected(item) => {

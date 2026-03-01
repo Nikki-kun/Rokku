@@ -10,7 +10,7 @@ use plotters_iced::ChartWidget;
 
 use crate::app::{App, Message, SidebarItem};
 use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
-use crate::data::pad_series_from_zero;
+use crate::data::{pad_series_from_zero, LogInfoKind};
 use crate::ui::{
     chart_card_container, chart_remove_button, drop_zone_container, nav_icon_button,
     param_add_button, param_add_disabled, param_icon_button, params_panel_container,
@@ -260,6 +260,140 @@ pub fn loading_view(app: &App) -> Element<'_, Message> {
     .into()
 }
 
+fn log_info_panel(app: &App) -> Element<'_, Message> {
+    let mut params_col = Column::new().spacing(4);
+    let mut meta_col = Column::new().spacing(4);
+    let mut n_params = 0usize;
+    let mut n_meta = 0usize;
+    let search = app.log_info_search.trim().to_lowercase();
+    let mut filtered_params = 0usize;
+    let mut filtered_meta = 0usize;
+
+    for entry in &app.log_info_entries {
+        match entry.kind {
+            LogInfoKind::Parameter => n_params += 1,
+            LogInfoKind::Metadata => n_meta += 1,
+        }
+
+        let matches_search = search.is_empty()
+            || entry.name.to_lowercase().contains(&search)
+            || entry.value.to_lowercase().contains(&search);
+        if !matches_search {
+            continue;
+        }
+
+        let line = row![
+            text(entry.name.as_str())
+                .size(12)
+                .width(Length::FillPortion(2))
+                .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+            text(entry.value.as_str())
+                .size(12)
+                .width(Length::FillPortion(3))
+                .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        match entry.kind {
+            LogInfoKind::Parameter => {
+                filtered_params += 1;
+                params_col = params_col.push(line);
+            }
+            LogInfoKind::Metadata => {
+                filtered_meta += 1;
+                meta_col = meta_col.push(line);
+            }
+        }
+    }
+
+    if filtered_params == 0 {
+        params_col = params_col.push(
+            text("Ничего не найдено")
+                .size(12)
+                .style(|theme| themed_text(theme, TEXT_MUTED)),
+        );
+    }
+    if filtered_meta == 0 {
+        meta_col = meta_col.push(
+            text("Ничего не найдено")
+                .size(12)
+                .style(|theme| themed_text(theme, TEXT_MUTED)),
+        );
+    }
+
+    let search_row: Element<Message> = row![
+        text_input("Поиск по имени или значению...", &app.log_info_search)
+            .on_input(Message::LogInfoSearchChanged)
+            .padding(8)
+            .size(12)
+            .width(Length::Fill),
+        if app.log_info_search.is_empty() {
+            Element::from(Space::with_width(0))
+        } else {
+            button(text(iced_fonts::nerd::icon_to_string(Nerd::X)).font(NERD_FONT))
+                .on_press(Message::LogInfoSearchChanged(String::new()))
+                .style(button::secondary)
+                .padding([6, 8])
+                .into()
+        },
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .width(Length::Fill)
+    .into();
+
+    let body = column![
+        text(format!(
+            "Информация лога: {} параметров, {} метаданных",
+            filtered_params, filtered_meta
+        ))
+        .size(14)
+        .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        Space::with_height(8),
+        search_row,
+        Space::with_height(8),
+        text(format!("Параметры (показано {} из {})", filtered_params, n_params))
+            .size(13)
+            .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        Space::with_height(6),
+        Scrollable::new(params_col)
+            .height(Length::FillPortion(3))
+            .width(Length::Fill),
+        Space::with_height(10),
+        Container::new(Space::with_height(1))
+            .width(Length::Fill)
+            .style(|theme: &iced::Theme| {
+                let palette = theme.extended_palette();
+                iced::widget::container::Style {
+                    background: Some(iced::Background::Color(
+                        palette.background.strong.color.scale_alpha(0.7),
+                    )),
+                    ..Default::default()
+                }
+            }),
+        Space::with_height(10),
+        Space::with_height(8),
+        text(format!("Метаданные (показано {} из {})", filtered_meta, n_meta))
+            .size(13)
+            .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+        Space::with_height(6),
+        Scrollable::new(meta_col)
+            .height(Length::FillPortion(2))
+            .width(Length::Fill),
+    ]
+    .spacing(2)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(12);
+
+    Container::new(body)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(chart_card_container)
+        .into()
+}
+
 pub fn charts_view(app: &App) -> Element<'_, Message> {
     let display_path = std::path::Path::new(&app.file_path)
         .file_name()
@@ -281,6 +415,32 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
             .align_y(Alignment::Center),
         )
         .on_press(Message::OpenFilePicker)
+        .style(param_icon_button)
+        .padding([4, 8]),
+        button(
+            row![
+                text(if app.show_log_info {
+                    iced_fonts::nerd::icon_to_string(Nerd::ChartLine)
+                } else {
+                    "i".to_string()
+                })
+                .font(if app.show_log_info {
+                    NERD_FONT
+                } else {
+                    iced::Font::DEFAULT
+                })
+                .size(12),
+                text(if app.show_log_info {
+                    "Открыть графики"
+                } else {
+                    "Открыть параметры"
+                })
+                .size(12),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::ToggleLogInfo)
         .style(param_icon_button)
         .padding([4, 8]),
     ]
@@ -560,11 +720,26 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let main_content = column![content, data_panel]
+    let main_content: Element<'_, Message> = if app.show_log_info {
+        column![
+            content,
+            Container::new(log_info_panel(app))
+                .width(Length::Fill)
+                .height(Length::Fill)
+        ]
         .spacing(24)
         .padding(16)
         .width(Length::Fill)
-        .height(Length::Fill);
+        .height(Length::Fill)
+        .into()
+    } else {
+        column![content, data_panel]
+            .spacing(24)
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
 
     row![
         persistent_sidebar(app),

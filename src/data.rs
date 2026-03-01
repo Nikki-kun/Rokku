@@ -10,6 +10,7 @@ pub struct ParsedLog {
     pub(crate) time_range: (f64, f64),
     pub(crate) parameters: Vec<String>,
     pub(crate) parameter_groups: Vec<ParamGroup>,
+    pub(crate) info_entries: Vec<LogInfoEntry>,
 }
 
 impl ParsedLog {
@@ -26,6 +27,10 @@ impl ParsedLog {
 
     pub fn parameter_groups(&self) -> &[ParamGroup] {
         &self.parameter_groups
+    }
+
+    pub fn info_entries(&self) -> &[LogInfoEntry] {
+        &self.info_entries
     }
 
     pub fn get_series(&self, param: &str) -> Option<Vec<(f64, f64)>> {
@@ -163,6 +168,19 @@ pub struct ParamGroup {
     pub fields: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogInfoKind {
+    Parameter,
+    Metadata,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogInfoEntry {
+    pub kind: LogInfoKind,
+    pub name: String,
+    pub value: String,
+}
+
 pub fn pad_series_from_zero(series: &[(f64, f64)]) -> Vec<(f64, f64)> {
     if let Some(&(first_ts, _)) = series.first() {
         if first_ts > 0.0 {
@@ -226,6 +244,7 @@ mod tests {
             time_range,
             parameters,
             parameter_groups,
+            info_entries: Vec::new(),
         }
     }
 

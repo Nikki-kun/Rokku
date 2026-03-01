@@ -5,7 +5,7 @@ use std::io::BufReader;
 use anyhow::Result;
 use ulog_rs::{ULogParser, ULogValue};
 
-use crate::data::{ParamGroup, ParsedLog};
+use crate::data::{LogInfoEntry, LogInfoKind, ParamGroup, ParsedLog};
 
 pub fn parse_ulog_columnar(filename: &str) -> Result<ParsedLog> {
     log::debug!("Parsing ULog file: {}", filename);
@@ -104,11 +104,37 @@ pub fn parse_ulog_columnar(filename: &str) -> Result<ParsedLog> {
         })
         .collect();
 
+    let mut info_entries: Vec<LogInfoEntry> = Vec::new();
+    info_entries.push(LogInfoEntry {
+        kind: LogInfoKind::Metadata,
+        name: "log.format".to_string(),
+        value: "PX4 ULog".to_string(),
+    });
+
+    for (key, info) in parser.info_messages() {
+        info_entries.push(LogInfoEntry {
+            kind: LogInfoKind::Metadata,
+            name: key.clone(),
+            value: ulog_value_to_text(info.raw_value()),
+        });
+    }
+
+    for (key, param) in parser.initial_params() {
+        info_entries.push(LogInfoEntry {
+            kind: LogInfoKind::Parameter,
+            name: key.clone(),
+            value: ulog_value_to_text(&param.value),
+        });
+    }
+
+    info_entries.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
+
     Ok(ParsedLog {
         series,
         time_range,
         parameters,
         parameter_groups,
+        info_entries,
     })
 }
 
@@ -138,5 +164,36 @@ fn ulog_value_to_f64(v: &ULogValue) -> Option<f64> {
         ULogValue::Int32Array(arr) if !arr.is_empty() => Some(arr[0] as f64),
         ULogValue::UInt32Array(arr) if !arr.is_empty() => Some(arr[0] as f64),
         _ => None,
+    }
+}
+
+fn ulog_value_to_text(v: &ULogValue) -> String {
+    match v {
+        ULogValue::Int8(x) => x.to_string(),
+        ULogValue::UInt8(x) => x.to_string(),
+        ULogValue::Int16(x) => x.to_string(),
+        ULogValue::UInt16(x) => x.to_string(),
+        ULogValue::Int32(x) => x.to_string(),
+        ULogValue::UInt32(x) => x.to_string(),
+        ULogValue::Int64(x) => x.to_string(),
+        ULogValue::UInt64(x) => x.to_string(),
+        ULogValue::Float(x) => format!("{:.6}", x),
+        ULogValue::Double(x) => format!("{:.6}", x),
+        ULogValue::Bool(x) => x.to_string(),
+        ULogValue::Char(x) => x.to_string(),
+        ULogValue::CharArray(s) => s.clone(),
+        ULogValue::Int8Array(v) => format!("{:?}", v),
+        ULogValue::UInt8Array(v) => format!("{:?}", v),
+        ULogValue::Int16Array(v) => format!("{:?}", v),
+        ULogValue::UInt16Array(v) => format!("{:?}", v),
+        ULogValue::Int32Array(v) => format!("{:?}", v),
+        ULogValue::UInt32Array(v) => format!("{:?}", v),
+        ULogValue::Int64Array(v) => format!("{:?}", v),
+        ULogValue::UInt64Array(v) => format!("{:?}", v),
+        ULogValue::FloatArray(v) => format!("{:?}", v),
+        ULogValue::DoubleArray(v) => format!("{:?}", v),
+        ULogValue::BoolArray(v) => format!("{:?}", v),
+        ULogValue::Message(v) => format!("{:?}", v),
+        ULogValue::MessageArray(v) => format!("{:?}", v),
     }
 }
