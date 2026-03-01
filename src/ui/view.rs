@@ -25,6 +25,8 @@ fn persistent_sidebar(app: &App) -> Element<'_, Message> {
             text(iced_fonts::nerd::icon_to_string(icon))
                 .font(NERD_FONT)
                 .size(20)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
                 .style(move |theme| {
                     if is_active {
                         themed_text(theme, ACCENT_COLOR)
