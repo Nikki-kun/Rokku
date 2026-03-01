@@ -1,4 +1,5 @@
 use iced::{
+    Background, Color,
     widget::{
         button, column, mouse_area, row, text, text_input, tooltip, Column, Container, Scrollable,
         Space,
@@ -8,13 +9,65 @@ use iced::{
 use iced_fonts::{nerd::to_text, nerd::Nerd, NERD_FONT};
 use plotters_iced::ChartWidget;
 
-use crate::app::{App, Message};
+use crate::app::{App, Message, SidebarItem};
 use crate::chart::{LogChart, CHART_PLOT_LEFT, CHART_PLOT_RIGHT};
 use crate::data::pad_series_from_zero;
 use crate::ui::{
     chart_card_container, chart_remove_button, drop_zone_container, ferra_container, ferra_text,
     param_add_button, param_add_disabled, param_icon_button, params_panel_container, FERRA_ACCENT,
 };
+
+fn persistent_sidebar(app: &App) -> Element<'_, Message> {
+    let nav_button = |icon: Nerd, item: SidebarItem| {
+        let is_active = app.active_sidebar == item;
+        button(
+            text(iced_fonts::nerd::icon_to_string(icon))
+                .font(NERD_FONT)
+                .size(20)
+                .style(move |_| {
+                    if is_active {
+                        ferra_text(FERRA_ACCENT)
+                    } else {
+                        ferra_text((0xab, 0x8a, 0x79))
+                    }
+                }),
+        )
+        .on_press(if item == SidebarItem::GraphBuilder {
+            Message::OpenFilePicker
+        } else {
+            Message::SidebarSelected(item)
+        })
+        .style(move |theme: &iced::Theme, status| {
+            let mut style = param_icon_button(theme, status);
+            if is_active {
+                style.background = Some(Background::Color(Color::from_rgb8(0x2a, 0x28, 0x2c)));
+                style.text_color = Color::from_rgb8(0xe8, 0xdc, 0xa8);
+            }
+            style
+        })
+        .padding([10, 10])
+    };
+
+    Container::new(
+        column![
+            nav_button(Nerd::ChartLine, SidebarItem::GraphBuilder),
+            Space::with_height(10),
+            nav_button(Nerd::Table, SidebarItem::Table),
+            Space::with_height(Length::Fill),
+            nav_button(Nerd::AccountCircle, SidebarItem::Profile),
+            Space::with_height(10),
+            nav_button(Nerd::Cog, SidebarItem::Settings),
+        ]
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding([16, 8]),
+    )
+    .width(50)
+    .height(Length::Fill)
+    .style(params_panel_container)
+    .into()
+}
 
 pub fn cursor_tooltip_content(app: &App) -> Element<'_, Message> {
     let Some(ref records) = app.records else {
@@ -78,7 +131,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
                 text("Перетащите .bin или .ulg файл сюда")
                     .size(16)
                     .style(|_| ferra_text((0xfe, 0xcd, 0xb2))),
-                text("или нажмите для выбора из проводника")
+                text("или нажмите иконку графика слева")
                     .size(13)
                     .style(|_| ferra_text((0xab, 0x8a, 0x79))),
             ]
@@ -89,9 +142,7 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .center_x(Length::Fill)
         .style(drop_zone_container),
-    )
-    .on_press(Message::OpenFilePicker)
-    .interaction(iced::mouse::Interaction::Pointer);
+    );
 
     let error_block: Element<Message> = if let Some(ref err) = app.load_error {
         column![
@@ -130,14 +181,22 @@ pub fn welcome_view(app: &App) -> Element<'_, Message> {
     .height(Length::Fill)
     .padding(40);
 
-    Container::new(welcome_content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(ferra_container)
-        .into()
+    row![
+        persistent_sidebar(app),
+        Space::with_width(16),
+        Container::new(welcome_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(ferra_container)
+    ]
+    .spacing(0)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
-pub fn loading_view() -> Element<'static, Message> {
+pub fn loading_view(app: &App) -> Element<'_, Message> {
     let content = column![
         Space::with_height(Length::Fill),
         text("Rokku").size(36).style(|_| ferra_text(FERRA_ACCENT)),
@@ -156,29 +215,31 @@ pub fn loading_view() -> Element<'static, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    Container::new(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(ferra_container)
-        .into()
+    row![
+        persistent_sidebar(app),
+        Space::with_width(16),
+        Container::new(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(ferra_container)
+    ]
+    .spacing(0)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 pub fn charts_view(app: &App) -> Element<'_, Message> {
-    let controls = row![
-        button("Открыть другой файл")
-            .on_press(Message::OpenFilePicker)
-            .style(button::secondary),
-        Space::with_width(15),
-        {
-            let display_path = std::path::Path::new(&app.file_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(&app.file_path);
-            text(display_path)
-                .size(13)
-                .style(|_| ferra_text((0xb1, 0xb6, 0x95)))
-        },
-    ]
+    let controls = row![{
+        let display_path = std::path::Path::new(&app.file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&app.file_path);
+        text(format!("Файл: {}", display_path))
+            .size(13)
+            .style(|_| ferra_text((0xb1, 0xb6, 0x95)))
+    },]
     .spacing(8)
     .align_y(Alignment::Center);
 
@@ -309,9 +370,9 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                         let param_clone = param.clone();
                         let i = idx;
                         let chart_widget_width = if let Some((_, w)) = app.chart_bounds {
-                            (w + 12.0).max(1.0)
+                            w.max(1.0)
                         } else {
-                            (app.chart_width - 104.0 + 12.0).max(100.0)
+                            (app.chart_width - 546.0).max(100.0)
                         };
                         let plot_width =
                             (chart_widget_width - CHART_PLOT_LEFT - CHART_PLOT_RIGHT).max(1.0);
@@ -319,7 +380,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                         let zoomed_time_range = (zoom_end - zoom_start).max(0.001);
                         let chart_with_cursor = mouse_area(
                             ChartWidget::new(chart)
-                                .width(Length::Fill)
+                                .width(Length::Fixed(chart_widget_width))
                                 .height(Length::Fixed(300.0)),
                         )
                         .on_move(move |p: Point| {
@@ -436,15 +497,21 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
 
     let main_content = column![content, data_panel]
         .spacing(24)
-        .padding(24)
+        .padding(16)
         .width(Length::Fill)
         .height(Length::Fill);
 
-    Container::new(main_content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(ferra_container)
-        .into()
+    row![
+        persistent_sidebar(app),
+        Space::with_width(16),
+        Container::new(main_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(ferra_container)
+    ]
+    .spacing(0)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }

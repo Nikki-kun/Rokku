@@ -7,6 +7,41 @@ use crate::data::{ParamGroup, ParsedLog};
 use crate::parser::parse_log;
 use crate::ui::{charts_view, loading_view, welcome_view};
 
+const SIDEBAR_WIDTH: f32 = 50.0;
+const SIDEBAR_GAP: f32 = 16.0;
+const OUTER_PADDING: f32 = 12.0;
+const MAIN_CONTENT_PADDING: f32 = 16.0;
+const PARAMS_PANEL_WIDTH: f32 = 280.0;
+const DATA_PANEL_SPACER: f32 = 24.0;
+const DATA_PANEL_SPACING: f32 = 10.0;
+const CHARTS_COLUMN_PADDING: f32 = 20.0;
+const CHARTS_SCROLL_RIGHT_PADDING: f32 = 16.0;
+const CHART_CARD_PADDING: f32 = 16.0;
+const SCROLLBAR_COMPENSATION: f32 = 12.0;
+
+fn compute_chart_widget_width(window_width: f32) -> f32 {
+    let occupied_width = (OUTER_PADDING * 2.0)
+        + SIDEBAR_WIDTH
+        + SIDEBAR_GAP
+        + (MAIN_CONTENT_PADDING * 2.0)
+        + PARAMS_PANEL_WIDTH
+        + DATA_PANEL_SPACER
+        + (DATA_PANEL_SPACING * 2.0)
+        + (CHARTS_COLUMN_PADDING * 2.0)
+        + CHARTS_SCROLL_RIGHT_PADDING
+        + (CHART_CARD_PADDING * 2.0)
+        + SCROLLBAR_COMPENSATION;
+    (window_width - occupied_width).max(100.0)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarItem {
+    GraphBuilder,
+    Table,
+    Profile,
+    Settings,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     FileDropped(PathBuf),
@@ -20,6 +55,7 @@ pub enum Message {
     ParamSearchChanged(String),
     ParamGroupToggled(String),
     ChartZoom(String, mouse::ScrollDelta),
+    SidebarSelected(SidebarItem),
 }
 
 pub struct App {
@@ -36,9 +72,27 @@ pub struct App {
     pub is_loading: bool,
     pub chart_width: f32,
     pub chart_bounds: Option<(f32, f32)>,
+    pub active_sidebar: SidebarItem,
 }
 
 impl App {
+    fn open_file_picker_task() -> Task<Message> {
+        Task::perform(
+            async {
+                tokio::task::spawn_blocking(|| {
+                    rfd::FileDialog::new()
+                        .add_filter("ArduPilot / PX4 logs", &["bin", "ulg"])
+                        .set_title("Выберите файл лога")
+                        .pick_file()
+                })
+                .await
+                .ok()
+                .flatten()
+            },
+            Message::FileSelected,
+        )
+    }
+
     pub fn new() -> (Self, Task<Message>) {
         (
             Self {
@@ -53,8 +107,9 @@ impl App {
                 cursor_time: None,
                 load_error: None,
                 is_loading: false,
-                chart_width: 700.0,
+                chart_width: 1200.0,
                 chart_bounds: None,
+                active_sidebar: SidebarItem::GraphBuilder,
             },
             Task::none(),
         )
@@ -89,10 +144,8 @@ impl App {
                 let (min_ts, _) = self.records.as_ref().unwrap().time_range();
                 self.cursor_time = Some(min_ts);
                 if self.chart_bounds.is_none() {
-                    let chart_left = 24.0 + 280.0 + 24.0 + 20.0 + 20.0 + 16.0;
-                    let chart_width =
-                        (self.chart_width - chart_left - 24.0 - 16.0 - 16.0).max(100.0);
-                    self.chart_bounds = Some((chart_left, chart_width));
+                    let chart_widget_width = compute_chart_widget_width(self.chart_width);
+                    self.chart_bounds = Some((0.0, chart_widget_width));
                 }
             }
             Err(e) => {
@@ -130,20 +183,10 @@ impl App {
                 state.load_error = None;
                 App::start_parse(path)
             }
-            Message::OpenFilePicker => Task::perform(
-                async {
-                    tokio::task::spawn_blocking(|| {
-                        rfd::FileDialog::new()
-                            .add_filter("ArduPilot / PX4 logs", &["bin", "ulg"])
-                            .set_title("Выберите файл лога")
-                            .pick_file()
-                    })
-                    .await
-                    .ok()
-                    .flatten()
-                },
-                Message::FileSelected,
-            ),
+            Message::OpenFilePicker => {
+                state.active_sidebar = SidebarItem::GraphBuilder;
+                App::open_file_picker_task()
+            }
             Message::FileSelected(path) => {
                 if let Some(p) = path {
                     state.is_loading = true;
@@ -182,10 +225,9 @@ impl App {
                 Task::none()
             }
             Message::WindowResized((_, size)) => {
-                state.chart_width = (size.width - 328.0).max(400.0);
-                let chart_left = 24.0 + 280.0 + 24.0 + 20.0 + 20.0 + 16.0;
-                let chart_width = (size.width - chart_left - 24.0 - 16.0 - 16.0).max(100.0);
-                state.chart_bounds = Some((chart_left, chart_width));
+                state.chart_width = size.width;
+                let chart_widget_width = compute_chart_widget_width(size.width);
+                state.chart_bounds = Some((0.0, chart_widget_width));
                 Task::none()
             }
             Message::ParamSearchChanged(s) => {
@@ -247,12 +289,20 @@ impl App {
                 }
                 Task::none()
             }
+            Message::SidebarSelected(item) => {
+                state.active_sidebar = item;
+                if item == SidebarItem::GraphBuilder {
+                    App::open_file_picker_task()
+                } else {
+                    Task::none()
+                }
+            }
         }
     }
 
     pub fn view(&self) -> iced::Element<'_, Message> {
         if self.is_loading {
-            return loading_view();
+            return loading_view(self);
         }
         if self.records.is_none() {
             return welcome_view(self);

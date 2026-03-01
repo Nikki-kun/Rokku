@@ -8,7 +8,7 @@ use crate::app::Message;
 use crate::data::{downsample_series, filter_series_to_range, MAX_CHART_POINTS};
 
 pub const CHART_PLOT_LEFT: f32 = 65.0;
-pub const CHART_PLOT_RIGHT: f32 = 50.0;
+pub const CHART_PLOT_RIGHT: f32 = 15.0;
 
 const FERRA_GRID: RGBColor = RGBColor(0x4f, 0x47, 0x4d);
 const FERRA_LABEL: RGBColor = RGBColor(0xab, 0x8a, 0x79);
