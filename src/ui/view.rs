@@ -415,6 +415,7 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                             app.settings.max_chart_points,
                         );
                         let param_clone = param.clone();
+                        let param_for_scroll = param.clone();
                         let i = idx;
                         let chart_widget_width = if let Some((_, w)) = app.chart_bounds {
                             w.max(1.0)
@@ -430,12 +431,29 @@ pub fn charts_view(app: &App) -> Element<'_, Message> {
                                 .width(Length::Fixed(chart_widget_width))
                                 .height(Length::Fixed(300.0)),
                         )
+                        .on_press(Message::ChartPanStart(param_clone.clone()))
+                        .on_release(Message::ChartPanEnd)
                         .on_move(move |p: Point| {
-                            let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
-                            let frac = (pos_in_plot / plot_width).min(1.0) as f64;
-                            Message::SetCursorTime(zoom_start + frac * zoomed_time_range)
+                            let is_panning = matches!(
+                                app.chart_pan_state,
+                                Some((ref pan_param, _)) if pan_param == &param_clone
+                            );
+                            if is_panning {
+                                let delta_time = match app.chart_pan_state {
+                                    Some((_, Some(last_x))) => {
+                                        let delta_x = p.x - last_x;
+                                        (delta_x as f64 / plot_width as f64) * zoomed_time_range
+                                    }
+                                    _ => 0.0,
+                                };
+                                Message::ChartPanMove(param_clone.clone(), delta_time, p.x)
+                            } else {
+                                let pos_in_plot = (p.x - CHART_PLOT_LEFT).max(0.0);
+                                let frac = (pos_in_plot / plot_width).min(1.0) as f64;
+                                Message::SetCursorTime(zoom_start + frac * zoomed_time_range)
+                            }
                         })
-                        .on_scroll(move |delta| Message::ChartZoom(param_clone.clone(), delta));
+                        .on_scroll(move |delta| Message::ChartZoom(param_for_scroll.clone(), delta));
                         let chart_with_tooltip = tooltip(
                             chart_with_cursor,
                             cursor_tooltip_content(app),

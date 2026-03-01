@@ -59,6 +59,9 @@ pub enum Message {
     ParamSearchChanged(String),
     ParamGroupToggled(String),
     ChartZoom(String, mouse::ScrollDelta),
+    ChartPanStart(String),
+    ChartPanMove(String, f64, f32),
+    ChartPanEnd,
     SidebarSelected(SidebarItem),
     SettingsPaletteChanged(String),
     SettingsServerAddressChanged(String),
@@ -76,6 +79,7 @@ pub struct App {
     pub param_search: String,
     pub active_charts: Vec<String>,
     pub chart_zoom: HashMap<String, (f64, f64)>,
+    pub chart_pan_state: Option<(String, Option<f32>)>,
     pub cursor_time: Option<f64>,
     pub load_error: Option<String>,
     pub is_loading: bool,
@@ -166,6 +170,7 @@ impl App {
                 param_search: String::new(),
                 active_charts: Vec::new(),
                 chart_zoom: HashMap::new(),
+                chart_pan_state: None,
                 cursor_time: None,
                 load_error: None,
                 is_loading: false,
@@ -206,6 +211,7 @@ impl App {
                 self.load_error = None;
                 self.active_charts.clear();
                 self.chart_zoom.clear();
+                self.chart_pan_state = None;
                 self.expanded_groups.clear();
                 let (min_ts, _) = self.records.as_ref().unwrap().time_range();
                 self.cursor_time = Some(min_ts);
@@ -222,6 +228,7 @@ impl App {
                 self.parameter_groups = Vec::new();
                 self.active_charts.clear();
                 self.chart_zoom.clear();
+                self.chart_pan_state = None;
             }
         }
     }
@@ -358,6 +365,50 @@ impl App {
                 } else {
                     state.chart_zoom.insert(param, (new_start, new_end));
                 }
+                Task::none()
+            }
+            Message::ChartPanStart(param) => {
+                if state.chart_zoom.contains_key(&param) {
+                    state.chart_pan_state = Some((param, None));
+                }
+                Task::none()
+            }
+            Message::ChartPanMove(param, delta_time, current_x) => {
+                if let Some((ref pan_param, _)) = state.chart_pan_state {
+                    if pan_param != &param {
+                        return Task::none();
+                    }
+                    state.chart_pan_state = Some((param.clone(), Some(current_x)));
+                    let Some(ref records) = state.records else {
+                        return Task::none();
+                    };
+                    let Some(data) = records.get_series(&param) else {
+                        return Task::none();
+                    };
+                    let (data_min, data_max) = data
+                        .iter()
+                        .map(|(t, _)| *t)
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| (a.min(t), b.max(t)));
+                    let Some((v_start, v_end)) = state.chart_zoom.get(&param).copied() else {
+                        return Task::none();
+                    };
+                    let current_range = (v_end - v_start).max(0.001);
+                    let mut new_start = v_start - delta_time;
+                    let mut new_end = v_end - delta_time;
+                    if new_start < data_min {
+                        new_start = data_min;
+                        new_end = (data_min + current_range).min(data_max);
+                    }
+                    if new_end > data_max {
+                        new_end = data_max;
+                        new_start = (data_max - current_range).max(data_min);
+                    }
+                    state.chart_zoom.insert(param, (new_start, new_end));
+                }
+                Task::none()
+            }
+            Message::ChartPanEnd => {
+                state.chart_pan_state = None;
                 Task::none()
             }
             Message::SidebarSelected(item) => {
