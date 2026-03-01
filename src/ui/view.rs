@@ -205,7 +205,7 @@ pub fn graph_builder_empty_view(app: &App) -> Element<'_, Message> {
             .style(|theme| themed_text(theme, ACCENT_COLOR)),
         Space::with_height(8),
         error_block,
-        Space::with_height(20),
+        Space::with_height(Length::Fill),
         drop_zone,
     ]
     .spacing(4)
@@ -231,10 +231,6 @@ pub fn graph_builder_empty_view(app: &App) -> Element<'_, Message> {
 pub fn loading_view(app: &App) -> Element<'_, Message> {
     let content = column![
         Space::with_height(Length::Fill),
-        text("Rokku")
-            .size(36)
-            .style(|theme| themed_text(theme, ACCENT_COLOR)),
-        Space::with_height(24),
         text("Загрузка и парсинг лога...")
             .size(16)
             .style(|theme| themed_text(theme, TEXT_HIGHLIGHT)),
