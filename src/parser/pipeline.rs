@@ -86,7 +86,9 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
     }
     log::debug!("Parsing ArduPilot log: {}", filename);
     let mut reader = ArduReader::new(filename);
-    let mut series: HashMap<String, Vec<(u64, f64)>> = HashMap::new();
+    let mut series_names: Vec<String> = Vec::new();
+    let mut series_values: Vec<Vec<(u64, f64)>> = Vec::new();
+    let mut series_idx_by_type: HashMap<u8, Vec<Option<usize>>> = HashMap::new();
     let mut discovered_types: BTreeSet<String> = BTreeSet::new();
     let mut parm_values: BTreeMap<String, String> = BTreeMap::new();
     let mut total_points = 0usize;
@@ -96,19 +98,35 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
             ArduFrame::Eof => break,
             ArduFrame::ArduDefinition(definition) => {
                 discovered_types.insert(definition.name.to_string());
+                let mut field_indexes = Vec::with_capacity(definition.labels.len());
+                for label in &definition.labels {
+                    if is_timestamp_field(label.as_ref()) {
+                        field_indexes.push(None);
+                        continue;
+                    }
+                    let key = format!("{}.{}", definition.name, label);
+                    let idx = series_names.len();
+                    series_names.push(key);
+                    series_values.push(Vec::new());
+                    field_indexes.push(Some(idx));
+                }
+                series_idx_by_type.insert(definition.ardu_fmt.type_id, field_indexes);
             }
             ArduFrame::ArduMessage(message) => {
                 let definition = reader
                     .get_definition(&message.type_id)
                     .ok_or_else(|| anyhow::anyhow!("Unknown type_id {}", message.type_id))?;
-                let msg_type = definition.name.as_ref();
                 let fields = message.fields;
+                let field_indexes = series_idx_by_type
+                    .get(&message.type_id)
+                    .ok_or_else(|| anyhow::anyhow!("Missing series map for type_id {}", message.type_id))?;
 
-                if msg_type == "PARM" {
+                if definition.name.as_ref() == "PARM" {
                     let mut parm_name: Option<String> = None;
                     let mut parm_value: Option<String> = None;
 
-                    for (label, val) in &fields {
+                    for (field_idx, val) in &fields {
+                        let label = definition.labels[*field_idx].as_ref();
                         if label == "Name" {
                             if let LogValue::Str(v) = val {
                                 if !v.is_empty() {
@@ -125,14 +143,12 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
                     }
                 }
 
-                for (label, val) in fields {
-                    if is_timestamp_field(&label) {
-                        continue;
-                    }
+                for (field_idx, val) in fields {
                     if let Some(v) = val.to_f64() {
-                        let key = format!("{}.{}", msg_type, label);
-                        series.entry(key).or_default().push((message.current_ts, v));
-                        total_points += 1;
+                        if let Some(Some(series_idx)) = field_indexes.get(field_idx) {
+                            series_values[*series_idx].push((message.current_ts, v));
+                            total_points += 1;
+                        }
                     }
                 }
             }
@@ -142,7 +158,7 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
     log::debug!(
         "Parsed {} data points into {} series",
         total_points,
-        series.len()
+        series_values.iter().filter(|v| !v.is_empty()).count()
     );
 
     let mut info_entries = Vec::new();
@@ -162,6 +178,13 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
             name,
             value,
         });
+    }
+
+    let mut series: HashMap<String, Vec<(u64, f64)>> = HashMap::with_capacity(series_names.len());
+    for (name, values) in series_names.into_iter().zip(series_values.into_iter()) {
+        if !values.is_empty() {
+            series.insert(name, values);
+        }
     }
 
     Ok(finish_parsed_log(series, info_entries))

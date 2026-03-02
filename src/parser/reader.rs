@@ -124,15 +124,16 @@ pub struct ArduReader {
 #[derive(Clone)]
 pub struct ArduDefinition {
     pub ardu_fmt: FmtPacket,
-    pub labels: Vec<String>,
+    pub labels: Vec<Arc<str>>,
     pub body_size: usize,
     pub name: Arc<str>,
+    pub timestamp_field_idx: Option<usize>,
 }
 
 pub struct ArduMessage {
     pub type_id: u8,
     pub current_ts: u64,
-    pub fields: Vec<(String, LogValue)>,
+    pub fields: Vec<(usize, LogValue)>,
 }
 
 impl ArduReader {
@@ -171,11 +172,14 @@ impl ArduReader {
 
         if header.msg_id == 128 {
             let ardu_fmt = FmtPacket::read(file)?;
-            let labels: Vec<String> = ardu_fmt
+            let labels: Vec<Arc<str>> = ardu_fmt
                 .labels
                 .split(',')
-                .map(|s| s.trim().to_string())
+                .map(|s| Arc::from(s.trim()))
                 .collect();
+            let timestamp_field_idx = labels
+                .iter()
+                .position(|label| label.as_ref() == "TimeUS" || label.as_ref() == "timestamp");
 
             let body_size = compute_body_size(&ardu_fmt.format_str).unwrap_or(0);
 
@@ -184,6 +188,7 @@ impl ArduReader {
                 labels,
                 body_size,
                 name: Arc::from(ardu_fmt.name.as_str()),
+                timestamp_field_idx,
             };
 
             self.definitions
@@ -219,8 +224,7 @@ impl ArduReader {
                 let c = c as char;
                 let val = parse_value(&mut cursor, c)?;
 
-                let label = definition.labels[idx].clone();
-                if label == "TimeUS" {
+                if definition.timestamp_field_idx == Some(idx) {
                     match &val {
                         LogValue::UInt(v) => current_ts = *v * 1000,
                         LogValue::Int(v) => current_ts = (*v as u64) * 1000,
@@ -228,7 +232,7 @@ impl ArduReader {
                     }
                 }
 
-                fields.push((label, val));
+                fields.push((idx, val));
             }
 
             if current_ts > 0 {
