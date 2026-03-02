@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
-use iced::{event, mouse, window, Subscription, Task};
+use iced::{event, keyboard, mouse, window, Subscription, Task};
 
 use crate::config::{self, AppConfig};
 use crate::data::{LogInfoEntry, ParamGroup, ParsedLog};
@@ -70,6 +71,8 @@ pub enum Message {
     SettingsServerAddressChanged(String),
     SettingsStrictTableFileBindingChanged(bool),
     SettingsMaxChartPointsChanged(String),
+    SettingsOpenConfigRequested,
+    SettingsOpenConfigFinished(Result<(), String>),
     SaveSettingsFinished(Result<(), String>),
     TableSelected(TableId),
     TableAddRow(TableId),
@@ -90,12 +93,19 @@ pub enum Message {
     ProfileRegistrationNameChanged(String),
     ProfileRegistrationEmailChanged(String),
     ProfileRegistrationPasswordChanged(String),
+    ProfileLoginEmailChanged(String),
+    ProfileLoginPasswordChanged(String),
+    ProfileSwitchToLogin,
+    ProfileSwitchToRegistration,
     ProfileRegisterSubmitted,
+    ProfileLoginSubmitted,
     ProfileNameChanged(String),
     ProfileEmailChanged(String),
-    ProfileOrganizationChanged(String),
     ProfileBioChanged(String),
+    ProfileAvatarPick,
+    ProfileAvatarSelected(Option<PathBuf>),
     ProfileSaveChanges,
+    EscapeToWelcome,
 }
 
 pub struct App {
@@ -128,10 +138,13 @@ pub struct App {
     pub profile_registration_name: String,
     pub profile_registration_email: String,
     pub profile_registration_password: String,
+    pub profile_login_email: String,
+    pub profile_login_password: String,
+    pub profile_is_login_mode: bool,
     pub profile_name: String,
     pub profile_email: String,
-    pub profile_organization: String,
     pub profile_bio: String,
+    pub profile_avatar_path: Option<String>,
     pub profile_status: Option<String>,
 }
 
@@ -291,6 +304,69 @@ impl App {
         )
     }
 
+    fn open_config_in_system(path: &PathBuf) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            let status = Command::new("cmd")
+                .arg("/C")
+                .arg("start")
+                .arg("")
+                .arg(path.as_os_str())
+                .status()
+                .map_err(|e| format!("Не удалось запустить открытие конфига: {}", e))?;
+            if status.success() {
+                return Ok(());
+            }
+            return Err(format!("Команда открытия завершилась с кодом: {:?}", status.code()));
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let status = Command::new("xdg-open")
+                .arg(path.as_os_str())
+                .status()
+                .map_err(|e| format!("Не удалось запустить xdg-open: {}", e))?;
+            if status.success() {
+                return Ok(());
+            }
+            return Err(format!("Команда xdg-open завершилась с кодом: {:?}", status.code()));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let status = Command::new("open")
+                .arg(path.as_os_str())
+                .status()
+                .map_err(|e| format!("Не удалось запустить open: {}", e))?;
+            if status.success() {
+                return Ok(());
+            }
+            return Err(format!("Команда open завершилась с кодом: {:?}", status.code()));
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        {
+            Err("Открытие конфига не поддерживается на этой ОС".to_string())
+        }
+    }
+
+    fn open_config_file_task(settings: AppConfig) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let path = config::config_path();
+                    if !path.exists() {
+                        config::save_config(&settings)?;
+                    }
+                    Self::open_config_in_system(&path)
+                })
+                .await
+                .unwrap_or_else(|e| Err(format!("Ошибка открытия конфига: {}", e)))
+            },
+            Message::SettingsOpenConfigFinished,
+        )
+    }
+
     fn open_file_picker_task() -> Task<Message> {
         Task::perform(
             async {
@@ -323,6 +399,23 @@ impl App {
                 (table, row_index, files)
             },
             |(table, row_index, files)| Message::TableFilesSelected(table, row_index, files),
+        )
+    }
+
+    fn open_avatar_picker_task() -> Task<Message> {
+        Task::perform(
+            async {
+                tokio::task::spawn_blocking(|| {
+                    rfd::FileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                        .set_title("Выберите аватар")
+                        .pick_file()
+                })
+                .await
+                .ok()
+                .flatten()
+            },
+            Message::ProfileAvatarSelected,
         )
     }
 
@@ -375,10 +468,13 @@ impl App {
                 profile_registration_name: String::new(),
                 profile_registration_email: String::new(),
                 profile_registration_password: String::new(),
+                profile_login_email: String::new(),
+                profile_login_password: String::new(),
+                profile_is_login_mode: false,
                 profile_name: String::new(),
                 profile_email: String::new(),
-                profile_organization: String::new(),
                 profile_bio: String::new(),
+                profile_avatar_path: None,
                 profile_status: None,
             },
             Task::none(),
@@ -386,15 +482,19 @@ impl App {
     }
 
     pub fn subscription(_state: &App) -> Subscription<Message> {
-        let file_drop = event::listen_with(move |event, _status, _window| {
-            if let iced::Event::Window(window::Event::FileDropped(path)) = event {
-                Some(Message::FileDropped(path))
-            } else {
-                None
+        let global_events = event::listen_with(move |event, _status, _window| match event {
+            iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
+            iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+                if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                    Some(Message::EscapeToWelcome)
+                } else {
+                    None
+                }
             }
+            _ => None,
         });
         let resize = window::resize_events().map(Message::WindowResized);
-        Subscription::batch([file_drop, resize])
+        Subscription::batch([global_events, resize])
     }
 
     pub fn apply_parse_result(&mut self, path: PathBuf, result: Result<ParsedLog, String>) {
@@ -677,6 +777,19 @@ impl App {
                     Task::none()
                 }
             }
+            Message::SettingsOpenConfigRequested => App::open_config_file_task(state.settings.clone()),
+            Message::SettingsOpenConfigFinished(result) => {
+                match result {
+                    Ok(()) => {
+                        let path = config::config_path();
+                        state.settings_status = Some(format!("Открыт конфиг: {}", path.display()));
+                    }
+                    Err(e) => {
+                        state.settings_status = Some(e);
+                    }
+                }
+                Task::none()
+            }
             Message::SaveSettingsFinished(result) => {
                 match result {
                     Ok(()) => {
@@ -810,6 +923,24 @@ impl App {
                 state.profile_registration_password = value;
                 Task::none()
             }
+            Message::ProfileLoginEmailChanged(value) => {
+                state.profile_login_email = value;
+                Task::none()
+            }
+            Message::ProfileLoginPasswordChanged(value) => {
+                state.profile_login_password = value;
+                Task::none()
+            }
+            Message::ProfileSwitchToLogin => {
+                state.profile_is_login_mode = true;
+                state.profile_status = None;
+                Task::none()
+            }
+            Message::ProfileSwitchToRegistration => {
+                state.profile_is_login_mode = false;
+                state.profile_status = None;
+                Task::none()
+            }
             Message::ProfileRegisterSubmitted => {
                 let name = state.profile_registration_name.trim();
                 let email = state.profile_registration_email.trim();
@@ -823,12 +954,42 @@ impl App {
                     return Task::none();
                 }
                 state.profile_registered = true;
+                state.profile_is_login_mode = false;
                 state.profile_name = name.to_string();
                 state.profile_email = email.to_string();
                 state.profile_registration_password.clear();
-                state.profile_organization = "Не указано".to_string();
                 state.profile_bio = "Добавьте информацию о себе".to_string();
                 state.profile_status = Some("Профиль создан".to_string());
+                Task::none()
+            }
+            Message::ProfileLoginSubmitted => {
+                let email = state.profile_login_email.trim();
+                let password = state.profile_login_password.trim();
+                if email.is_empty() || password.is_empty() {
+                    state.profile_status = Some("Введите email и пароль".to_string());
+                    return Task::none();
+                }
+                if !email.contains('@') {
+                    state.profile_status = Some("Введите корректный email".to_string());
+                    return Task::none();
+                }
+
+                state.profile_registered = true;
+                state.profile_is_login_mode = true;
+                if state.profile_name.trim().is_empty() {
+                    state.profile_name = email
+                        .split('@')
+                        .next()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or("Пользователь")
+                        .to_string();
+                }
+                state.profile_email = email.to_string();
+                state.profile_login_password.clear();
+                if state.profile_bio.trim().is_empty() {
+                    state.profile_bio = "Добавьте информацию о себе".to_string();
+                }
+                state.profile_status = Some("Вход выполнен".to_string());
                 Task::none()
             }
             Message::ProfileNameChanged(value) => {
@@ -839,12 +1000,13 @@ impl App {
                 state.profile_email = value;
                 Task::none()
             }
-            Message::ProfileOrganizationChanged(value) => {
-                state.profile_organization = value;
-                Task::none()
-            }
             Message::ProfileBioChanged(value) => {
                 state.profile_bio = value;
+                Task::none()
+            }
+            Message::ProfileAvatarPick => App::open_avatar_picker_task(),
+            Message::ProfileAvatarSelected(path) => {
+                state.profile_avatar_path = path.map(|p| p.to_string_lossy().to_string());
                 Task::none()
             }
             Message::ProfileSaveChanges => {
@@ -857,6 +1019,11 @@ impl App {
                     return Task::none();
                 }
                 state.profile_status = Some("Изменения профиля сохранены".to_string());
+                Task::none()
+            }
+            Message::EscapeToWelcome => {
+                state.show_welcome = true;
+                state.active_file_manager = None;
                 Task::none()
             }
         }

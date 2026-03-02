@@ -648,52 +648,172 @@ pub fn profile_view(app: &App) -> Element<'_, Message> {
         .sum();
 
     let body: Element<Message> = if !app.profile_registered {
-        Container::new(
+        let status_is_error = app.profile_status.as_ref().is_some_and(|status| {
+            let lowered = status.to_lowercase();
+            lowered.contains("заполни")
+                || lowered.contains("коррект")
+                || lowered.contains("пуст")
+                || lowered.contains("ошиб")
+        });
+        let is_login_mode = app.profile_is_login_mode;
+
+        let auth_fields: Element<Message> = if is_login_mode {
             column![
-                text("Регистрация")
-                    .size(24)
-                    .style(|theme| themed_text(theme, ACCENT_COLOR)),
-                text("Создайте профиль для работы с таблицами и статистикой")
-                    .size(13)
-                    .style(|theme| themed_text(theme, TEXT_MUTED)),
-                Space::with_height(12),
+                text("Email")
+                    .size(12)
+                    .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+                text_input("name@example.com", &app.profile_login_email)
+                    .on_input(Message::ProfileLoginEmailChanged)
+                    .width(Length::Fill)
+                    .padding(10),
+                Space::with_height(2),
+                text("Пароль")
+                    .size(12)
+                    .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+                text_input("Введите пароль", &app.profile_login_password)
+                    .on_input(Message::ProfileLoginPasswordChanged)
+                    .secure(true)
+                    .width(Length::Fill)
+                    .padding(10),
+            ]
+            .spacing(2)
+            .into()
+        } else {
+            column![
                 text("Имя")
                     .size(12)
                     .style(|theme| themed_text(theme, TEXT_PRIMARY)),
                 text_input("Введите имя", &app.profile_registration_name)
                     .on_input(Message::ProfileRegistrationNameChanged)
-                    .padding(8),
-                Space::with_height(6),
+                    .width(Length::Fill)
+                    .padding(10),
+                Space::with_height(2),
                 text("Email")
                     .size(12)
                     .style(|theme| themed_text(theme, TEXT_PRIMARY)),
                 text_input("name@example.com", &app.profile_registration_email)
                     .on_input(Message::ProfileRegistrationEmailChanged)
-                    .padding(8),
-                Space::with_height(6),
+                    .width(Length::Fill)
+                    .padding(10),
+                Space::with_height(2),
                 text("Пароль")
                     .size(12)
                     .style(|theme| themed_text(theme, TEXT_PRIMARY)),
                 text_input("Минимум 6 символов", &app.profile_registration_password)
                     .on_input(Message::ProfileRegistrationPasswordChanged)
-                    .padding(8),
+                    .secure(true)
+                    .width(Length::Fill)
+                    .padding(10),
+            ]
+            .spacing(2)
+            .into()
+        };
+
+        let registration_card = Container::new(
+            column![
+                row![
+                    text(iced_fonts::nerd::icon_to_string(if is_login_mode {
+                        Nerd::Login
+                    } else {
+                        Nerd::AccountCircle
+                    }))
+                    .font(NERD_FONT)
+                    .size(22)
+                    .style(|theme| themed_text(theme, ACCENT_COLOR)),
+                    text(if is_login_mode { "Логин" } else { "Регистрация" })
+                        .size(26)
+                        .style(|theme| themed_text(theme, ACCENT_COLOR)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+                text("Войдите в профиль или зарегистрируйтесь, чтобы синхронизировать данные и продолжить работу с любого устройства.")
+                    .size(13)
+                    .style(|theme| themed_text(theme, TEXT_MUTED)),
+                Space::with_height(6),
+                Container::new(Space::with_height(1))
+                    .width(Length::Fill)
+                    .style(|theme: &iced::Theme| {
+                        let palette = theme.extended_palette();
+                        iced::widget::container::Style {
+                            background: Some(iced::Background::Color(
+                                palette.background.strong.color.scale_alpha(0.7),
+                            )),
+                            ..Default::default()
+                        }
+                    }),
                 Space::with_height(10),
-                button("Зарегистрироваться")
-                    .on_press(Message::ProfileRegisterSubmitted)
-                    .style(button::secondary),
+                Container::new(auth_fields)
+                    .width(Length::Fill)
+                    .height(Length::Fixed(170.0)),
+                Space::with_height(8),
+                row![
+                    button(
+                        row![
+                            text(iced_fonts::nerd::icon_to_string(if is_login_mode {
+                                Nerd::Login
+                            } else {
+                                Nerd::Check
+                            }))
+                            .font(NERD_FONT)
+                            .size(13),
+                            text(if is_login_mode {
+                                "Войти"
+                            } else {
+                                "Зарегистрироваться"
+                            })
+                            .size(13),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .on_press(if is_login_mode {
+                        Message::ProfileLoginSubmitted
+                    } else {
+                        Message::ProfileRegisterSubmitted
+                    })
+                    .style(button::secondary)
+                    .padding([8, 12]),
+                    button(if is_login_mode {
+                        "Нет аккаунта?"
+                    } else {
+                        "Уже есть аккаунт?"
+                    })
+                    .on_press(if is_login_mode {
+                        Message::ProfileSwitchToRegistration
+                    } else {
+                        Message::ProfileSwitchToLogin
+                    })
+                    .style(param_icon_button)
+                    .padding([8, 12]),
+                ]
+                .spacing(8),
                 if let Some(status) = &app.profile_status {
-                    text(status)
-                        .size(12)
-                        .style(|theme| themed_text(theme, TEXT_INFO))
+                    text(status).size(12).style(move |theme| {
+                        if status_is_error {
+                            themed_text(theme, TEXT_ERROR)
+                        } else {
+                            themed_text(theme, TEXT_INFO)
+                        }
+                    })
                 } else {
                     text("")
                 }
             ]
-            .spacing(4)
-            .padding(20)
+            .spacing(6)
+            .padding([22, 24])
+            .width(Length::Fill)
+            .height(Length::Fixed(430.0)),
+        )
+        .style(chart_card_container);
+
+        Container::new(
+            row![
+                Space::with_width(Length::Fill),
+                Container::new(registration_card).width(Length::FillPortion(3)),
+                Space::with_width(Length::Fill),
+            ]
             .width(Length::Fill),
         )
-        .style(chart_card_container)
         .width(Length::Fill)
         .into()
     } else {
@@ -715,15 +835,37 @@ pub fn profile_view(app: &App) -> Element<'_, Message> {
                         text(format!("Email: {}", app.profile_email))
                             .size(13)
                             .style(|theme| themed_text(theme, TEXT_PRIMARY)),
-                        text(format!("Организация: {}", app.profile_organization))
+                        text(format!(
+                            "Аватар: {}",
+                            app.profile_avatar_path
+                                .as_ref()
+                                .and_then(|p| std::path::Path::new(p).file_name())
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("Не выбран")
+                        ))
                             .size(13)
                             .style(|theme| themed_text(theme, TEXT_PRIMARY)),
+                        Space::with_height(4),
+                        button(
+                            row![
+                                text(iced_fonts::nerd::icon_to_string(Nerd::Image))
+                                    .font(NERD_FONT)
+                                    .size(12),
+                                text("Выбрать аватар").size(12),
+                            ]
+                            .spacing(6)
+                            .align_y(Alignment::Center),
+                        )
+                        .on_press(Message::ProfileAvatarPick)
+                        .style(param_icon_button)
+                        .padding([6, 10]),
                     ]
                     .spacing(4)
                     .padding(16),
                 )
                 .style(chart_card_container)
-                .width(Length::FillPortion(2)),
+                .width(Length::FillPortion(2))
+                .height(Length::Fixed(190.0)),
                 Container::new(
                     column![
                         text("Статистика")
@@ -747,7 +889,8 @@ pub fn profile_view(app: &App) -> Element<'_, Message> {
                     .padding(16),
                 )
                 .style(chart_card_container)
-                .width(Length::FillPortion(2)),
+                .width(Length::FillPortion(2))
+                .height(Length::Fixed(190.0)),
             ]
             .spacing(12),
             Space::with_height(12),
@@ -769,13 +912,6 @@ pub fn profile_view(app: &App) -> Element<'_, Message> {
                         .style(|theme| themed_text(theme, TEXT_PRIMARY)),
                     text_input("Email", &app.profile_email)
                         .on_input(Message::ProfileEmailChanged)
-                        .padding(8),
-                    Space::with_height(6),
-                    text("Организация")
-                        .size(12)
-                        .style(|theme| themed_text(theme, TEXT_PRIMARY)),
-                    text_input("Организация", &app.profile_organization)
-                        .on_input(Message::ProfileOrganizationChanged)
                         .padding(8),
                     Space::with_height(6),
                     text("О себе")
@@ -861,6 +997,27 @@ pub fn settings_view(app: &App) -> Element<'_, Message> {
         text_input("250", &app.max_chart_points_input)
             .on_input(Message::SettingsMaxChartPointsChanged)
             .padding(8),
+        Space::with_height(10),
+        button(
+            row![
+                text(iced_fonts::nerd::icon_to_string(Nerd::FileCode))
+                    .font(NERD_FONT)
+                    .size(12),
+                text("Открыть конфигурацию").size(12),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::SettingsOpenConfigRequested)
+        .style(param_icon_button)
+        .padding([6, 10]),
+        if let Some(status) = &app.settings_status {
+            text(status)
+                .size(12)
+                .style(|theme| themed_text(theme, TEXT_INFO))
+        } else {
+            text("")
+        },
     ]
     .spacing(4)
     .width(Length::Fill)
