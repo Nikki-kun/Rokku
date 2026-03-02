@@ -80,7 +80,9 @@ pub fn themed_text(theme: &Theme, color: (u8, u8, u8)) -> iced::widget::text::St
         TEXT_ERROR => palette.danger.base.color,
         _ => IcedColor::from_rgb8(color.0, color.1, color.2),
     };
-    iced::widget::text::Style { color: Some(mapped) }
+    iced::widget::text::Style {
+        color: Some(mapped),
+    }
 }
 
 pub fn nav_icon_button(_theme: &Theme, status: button::Status) -> button::Style {
@@ -91,10 +93,7 @@ pub fn nav_icon_button(_theme: &Theme, status: button::Status) -> button::Style 
             palette.background.strong.color,
             palette.background.base.text,
         ),
-        button::Status::Pressed => (
-            palette.primary.base.color,
-            palette.primary.strong.color,
-        ),
+        button::Status::Pressed => (palette.primary.base.color, palette.primary.strong.color),
         _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {
@@ -117,10 +116,7 @@ pub fn param_icon_button(_theme: &Theme, status: button::Status) -> button::Styl
             palette.background.strong.color,
             palette.background.base.text,
         ),
-        button::Status::Pressed => (
-            palette.primary.base.color,
-            palette.primary.strong.color,
-        ),
+        button::Status::Pressed => (palette.primary.base.color, palette.primary.strong.color),
         _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {
@@ -143,10 +139,7 @@ pub fn param_add_button(_theme: &Theme, status: button::Status) -> button::Style
             palette.primary.base.color.scale_alpha(0.5),
             palette.primary.strong.color,
         ),
-        button::Status::Pressed => (
-            palette.primary.strong.color,
-            palette.primary.strong.color,
-        ),
+        button::Status::Pressed => (palette.primary.strong.color, palette.primary.strong.color),
         _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {
@@ -169,10 +162,7 @@ pub fn chart_remove_button(_theme: &Theme, status: button::Status) -> button::St
             palette.danger.base.color.scale_alpha(0.5),
             palette.danger.strong.color,
         ),
-        button::Status::Pressed => (
-            palette.danger.strong.color,
-            palette.danger.strong.color,
-        ),
+        button::Status::Pressed => (palette.danger.strong.color, palette.danger.strong.color),
         _ => (IcedColor::TRANSPARENT, text_color),
     };
     button::Style {

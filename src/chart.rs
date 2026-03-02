@@ -82,9 +82,7 @@ impl Chart<Message> for LogChart {
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
                 (a.min(t), b.max(t))
             });
-        let (min_ts, max_ts) = self
-            .x_range
-            .unwrap_or((data_min_ts, data_max_ts));
+        let (min_ts, max_ts) = self.x_range.unwrap_or((data_min_ts, data_max_ts));
 
         let (min_val, max_val): (f64, f64) = self
             .data

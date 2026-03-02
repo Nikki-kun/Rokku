@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 
 use iced::{event, mouse, window, Subscription, Task};
@@ -6,9 +7,9 @@ use iced::{event, mouse, window, Subscription, Task};
 use crate::config::{self, AppConfig};
 use crate::data::{LogInfoEntry, ParamGroup, ParsedLog};
 use crate::parser::parse_log;
+pub use crate::table::{table_schema, TableColumnType, TableFileManagerTarget, TableId, TableRow};
 use crate::ui::{
-    charts_view, graph_builder_empty_view, loading_view, section_placeholder_view, settings_view,
-    welcome_view,
+    charts_view, graph_builder_empty_view, loading_view, profile_view, settings_view, welcome_view,
 };
 
 const SIDEBAR_WIDTH: f32 = 50.0;
@@ -70,6 +71,31 @@ pub enum Message {
     SettingsStrictTableFileBindingChanged(bool),
     SettingsMaxChartPointsChanged(String),
     SaveSettingsFinished(Result<(), String>),
+    TableSelected(TableId),
+    TableAddRow(TableId),
+    TableRemoveRow(TableId, usize),
+    TableCellChanged {
+        table: TableId,
+        row_index: usize,
+        column: String,
+        value: String,
+    },
+    TableOpenFileManager(TableId, usize),
+    TableCloseFileManager,
+    TableAddFiles(TableId, usize),
+    TableFilesSelected(TableId, usize, Vec<PathBuf>),
+    TableRemoveFile(TableId, usize, usize),
+    TableOpenFileInGraph(TableId, usize, usize),
+    SaveTableDataFinished(Result<(), String>),
+    ProfileRegistrationNameChanged(String),
+    ProfileRegistrationEmailChanged(String),
+    ProfileRegistrationPasswordChanged(String),
+    ProfileRegisterSubmitted,
+    ProfileNameChanged(String),
+    ProfileEmailChanged(String),
+    ProfileOrganizationChanged(String),
+    ProfileBioChanged(String),
+    ProfileSaveChanges,
 }
 
 pub struct App {
@@ -95,9 +121,140 @@ pub struct App {
     pub settings: AppConfig,
     pub settings_status: Option<String>,
     pub max_chart_points_input: String,
+    pub active_table: TableId,
+    pub table_rows: HashMap<TableId, Vec<TableRow>>,
+    pub active_file_manager: Option<TableFileManagerTarget>,
+    pub profile_registered: bool,
+    pub profile_registration_name: String,
+    pub profile_registration_email: String,
+    pub profile_registration_password: String,
+    pub profile_name: String,
+    pub profile_email: String,
+    pub profile_organization: String,
+    pub profile_bio: String,
+    pub profile_status: Option<String>,
 }
 
 impl App {
+    fn table_data_path() -> PathBuf {
+        if let Some(parent) = config::config_path().parent() {
+            parent.join("tables.json")
+        } else {
+            PathBuf::from("tables.json")
+        }
+    }
+
+    fn load_table_rows() -> HashMap<TableId, Vec<TableRow>> {
+        let mut defaults = HashMap::from([
+            (TableId::Flights, Vec::new()),
+            (TableId::Missions, Vec::new()),
+            (TableId::Drones, Vec::new()),
+        ]);
+        let path = Self::table_data_path();
+        if !path.exists() {
+            return defaults;
+        }
+        match fs::read_to_string(&path) {
+            Ok(raw) => match serde_json::from_str::<HashMap<TableId, Vec<TableRow>>>(&raw) {
+                Ok(mut parsed) => {
+                    for (table, rows) in defaults.drain() {
+                        parsed.entry(table).or_insert(rows);
+                    }
+                    parsed
+                }
+                Err(e) => {
+                    log::warn!("Некорректный формат файла таблиц {}: {}", path.display(), e);
+                    HashMap::from([
+                        (TableId::Flights, Vec::new()),
+                        (TableId::Missions, Vec::new()),
+                        (TableId::Drones, Vec::new()),
+                    ])
+                }
+            },
+            Err(e) => {
+                log::warn!("Не удалось прочитать файл таблиц {}: {}", path.display(), e);
+                HashMap::from([
+                    (TableId::Flights, Vec::new()),
+                    (TableId::Missions, Vec::new()),
+                    (TableId::Drones, Vec::new()),
+                ])
+            }
+        }
+    }
+
+    fn save_table_data_task(table_rows: HashMap<TableId, Vec<TableRow>>) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let path = Self::table_data_path();
+                    let Some(parent) = path.parent() else {
+                        return Err(format!("Некорректный путь таблиц: {}", path.display()));
+                    };
+                    fs::create_dir_all(parent).map_err(|e| {
+                        format!("Не удалось создать каталог {}: {}", parent.display(), e)
+                    })?;
+                    let raw = serde_json::to_string_pretty(&table_rows)
+                        .map_err(|e| format!("Ошибка сериализации таблиц: {}", e))?;
+                    fs::write(&path, raw).map_err(|e| {
+                        format!("Не удалось сохранить таблицы {}: {}", path.display(), e)
+                    })
+                })
+                .await
+                .unwrap_or_else(|e| Err(format!("Ошибка сохранения таблиц: {}", e)))
+            },
+            Message::SaveTableDataFinished,
+        )
+    }
+
+    pub fn table_reference_options(&self, table: TableId) -> Vec<String> {
+        let Some(rows) = self.table_rows.get(&table) else {
+            return Vec::new();
+        };
+
+        let mut options = Vec::with_capacity(rows.len());
+        for (idx, row) in rows.iter().enumerate() {
+            let label = match table {
+                TableId::Missions => row
+                    .cells
+                    .get("missionObjective")
+                    .filter(|v| !v.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Миссия {}", idx + 1)),
+                TableId::Drones => {
+                    let factory = row
+                        .cells
+                        .get("factoryNumber")
+                        .map(|v| v.trim())
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or("");
+                    let alternative = row
+                        .cells
+                        .get("alternativeNumber")
+                        .map(|v| v.trim())
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or("");
+                    if !factory.is_empty() && !alternative.is_empty() {
+                        format!("{} ({})", factory, alternative)
+                    } else if !factory.is_empty() {
+                        factory.to_string()
+                    } else if !alternative.is_empty() {
+                        alternative.to_string()
+                    } else {
+                        format!("Борт {}", idx + 1)
+                    }
+                }
+                TableId::Flights => row
+                    .cells
+                    .get("mission")
+                    .filter(|v| !v.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Полет {}", idx + 1)),
+            };
+            options.push(label);
+        }
+        options
+    }
+
     pub fn theme(&self) -> iced::Theme {
         match self.settings.palette.as_str() {
             "onedark" => iced::Theme::custom(
@@ -151,6 +308,24 @@ impl App {
         )
     }
 
+    fn open_table_files_picker_task(table: TableId, row_index: usize) -> Task<Message> {
+        Task::perform(
+            async move {
+                let files = tokio::task::spawn_blocking(|| {
+                    rfd::FileDialog::new()
+                        .set_title("Выберите файлы для прикрепления")
+                        .pick_files()
+                })
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+                (table, row_index, files)
+            },
+            |(table, row_index, files)| Message::TableFilesSelected(table, row_index, files),
+        )
+    }
+
     pub fn new() -> (Self, Task<Message>) {
         let (settings, settings_status) = match config::load_config() {
             Ok(cfg) => (cfg, None),
@@ -158,13 +333,17 @@ impl App {
                 log::warn!("{}", e);
                 (
                     AppConfig::default(),
-                    Some(format!("Конфиг не загружен, использованы значения по умолчанию: {}", e)),
+                    Some(format!(
+                        "Конфиг не загружен, использованы значения по умолчанию: {}",
+                        e
+                    )),
                 )
             }
         };
         let mut settings = settings;
         settings.palette = config::normalize_palette(&settings.palette);
         let max_chart_points_input = settings.max_chart_points.to_string();
+        let table_rows = Self::load_table_rows();
         (
             Self {
                 file_path: String::new(),
@@ -189,6 +368,18 @@ impl App {
                 settings,
                 settings_status,
                 max_chart_points_input,
+                active_table: TableId::Flights,
+                table_rows,
+                active_file_manager: None,
+                profile_registered: false,
+                profile_registration_name: String::new(),
+                profile_registration_email: String::new(),
+                profile_registration_password: String::new(),
+                profile_name: String::new(),
+                profile_email: String::new(),
+                profile_organization: String::new(),
+                profile_bio: String::new(),
+                profile_status: None,
             },
             Task::none(),
         )
@@ -355,10 +546,19 @@ impl App {
                 let (data_min, data_max) = data
                     .iter()
                     .map(|(t, _)| *t)
-                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| (a.min(t), b.max(t)));
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
+                        (a.min(t), b.max(t))
+                    });
                 let full_range = (data_max - data_min).max(0.001);
-                let pivot = state.cursor_time.unwrap_or(data_min).clamp(data_min, data_max);
-                let (v_start, v_end) = state.chart_zoom.get(&param).copied().unwrap_or((data_min, data_max));
+                let pivot = state
+                    .cursor_time
+                    .unwrap_or(data_min)
+                    .clamp(data_min, data_max);
+                let (v_start, v_end) = state
+                    .chart_zoom
+                    .get(&param)
+                    .copied()
+                    .unwrap_or((data_min, data_max));
                 let current_range = (v_end - v_start).max(0.001);
                 let zoom_factor = if delta_y > 0.0 { 1.0 / 1.15 } else { 1.15 };
                 let new_range = (current_range * zoom_factor).clamp(full_range * 0.01, full_range);
@@ -406,7 +606,9 @@ impl App {
                     let (data_min, data_max) = data
                         .iter()
                         .map(|(t, _)| *t)
-                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| (a.min(t), b.max(t)));
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
+                            (a.min(t), b.max(t))
+                        });
                     let Some((v_start, v_end)) = state.chart_zoom.get(&param).copied() else {
                         return Task::none();
                     };
@@ -488,6 +690,175 @@ impl App {
                 }
                 Task::none()
             }
+            Message::TableSelected(table) => {
+                state.active_table = table;
+                Task::none()
+            }
+            Message::TableAddRow(table) => {
+                let schema = table_schema(table);
+                let mut row_cells = HashMap::new();
+                for column in schema.columns {
+                    row_cells.insert(column.name.to_string(), String::new());
+                }
+                state.table_rows.entry(table).or_default().push(TableRow {
+                    cells: row_cells,
+                    files: Vec::new(),
+                });
+                App::save_table_data_task(state.table_rows.clone())
+            }
+            Message::TableRemoveRow(table, row_index) => {
+                if let Some(rows) = state.table_rows.get_mut(&table) {
+                    if row_index < rows.len() {
+                        rows.remove(row_index);
+                        if let Some(active) = state.active_file_manager {
+                            if active.table == table && active.row_index == row_index {
+                                state.active_file_manager = None;
+                            } else if active.table == table && active.row_index > row_index {
+                                state.active_file_manager = Some(TableFileManagerTarget {
+                                    table,
+                                    row_index: active.row_index - 1,
+                                });
+                            }
+                        }
+                    }
+                }
+                App::save_table_data_task(state.table_rows.clone())
+            }
+            Message::TableCellChanged {
+                table,
+                row_index,
+                column,
+                value,
+            } => {
+                if let Some(rows) = state.table_rows.get_mut(&table) {
+                    if let Some(row) = rows.get_mut(row_index) {
+                        row.cells.insert(column, value);
+                    }
+                }
+                App::save_table_data_task(state.table_rows.clone())
+            }
+            Message::TableOpenFileManager(table, row_index) => {
+                state.active_file_manager = Some(TableFileManagerTarget { table, row_index });
+                Task::none()
+            }
+            Message::TableCloseFileManager => {
+                state.active_file_manager = None;
+                Task::none()
+            }
+            Message::TableAddFiles(table, row_index) => {
+                App::open_table_files_picker_task(table, row_index)
+            }
+            Message::TableFilesSelected(table, row_index, files) => {
+                if let Some(rows) = state.table_rows.get_mut(&table) {
+                    if let Some(row) = rows.get_mut(row_index) {
+                        for path in files {
+                            let path_string = path.to_string_lossy().to_string();
+                            if !row.files.iter().any(|existing| existing == &path_string) {
+                                row.files.push(path_string);
+                            }
+                        }
+                    }
+                }
+                App::save_table_data_task(state.table_rows.clone())
+            }
+            Message::TableRemoveFile(table, row_index, file_index) => {
+                if let Some(rows) = state.table_rows.get_mut(&table) {
+                    if let Some(row) = rows.get_mut(row_index) {
+                        if file_index < row.files.len() {
+                            row.files.remove(file_index);
+                        }
+                    }
+                }
+                App::save_table_data_task(state.table_rows.clone())
+            }
+            Message::TableOpenFileInGraph(table, row_index, file_index) => {
+                let Some(rows) = state.table_rows.get(&table) else {
+                    return Task::none();
+                };
+                let Some(row) = rows.get(row_index) else {
+                    return Task::none();
+                };
+                let Some(path_string) = row.files.get(file_index) else {
+                    return Task::none();
+                };
+                let path = PathBuf::from(path_string);
+                if !path.exists() {
+                    state.load_error = Some(format!("Файл не найден: {}", path.display()));
+                    return Task::none();
+                }
+                state.show_welcome = false;
+                state.active_sidebar = SidebarItem::GraphBuilder;
+                state.is_loading = true;
+                state.load_error = None;
+                App::start_parse(path)
+            }
+            Message::SaveTableDataFinished(result) => {
+                if let Err(e) = result {
+                    log::warn!("{}", e);
+                }
+                Task::none()
+            }
+            Message::ProfileRegistrationNameChanged(value) => {
+                state.profile_registration_name = value;
+                Task::none()
+            }
+            Message::ProfileRegistrationEmailChanged(value) => {
+                state.profile_registration_email = value;
+                Task::none()
+            }
+            Message::ProfileRegistrationPasswordChanged(value) => {
+                state.profile_registration_password = value;
+                Task::none()
+            }
+            Message::ProfileRegisterSubmitted => {
+                let name = state.profile_registration_name.trim();
+                let email = state.profile_registration_email.trim();
+                let password = state.profile_registration_password.trim();
+                if name.is_empty() || email.is_empty() || password.is_empty() {
+                    state.profile_status = Some("Заполни имя, email и пароль".to_string());
+                    return Task::none();
+                }
+                if !email.contains('@') {
+                    state.profile_status = Some("Введите корректный email".to_string());
+                    return Task::none();
+                }
+                state.profile_registered = true;
+                state.profile_name = name.to_string();
+                state.profile_email = email.to_string();
+                state.profile_registration_password.clear();
+                state.profile_organization = "Не указано".to_string();
+                state.profile_bio = "Добавьте информацию о себе".to_string();
+                state.profile_status = Some("Профиль создан".to_string());
+                Task::none()
+            }
+            Message::ProfileNameChanged(value) => {
+                state.profile_name = value;
+                Task::none()
+            }
+            Message::ProfileEmailChanged(value) => {
+                state.profile_email = value;
+                Task::none()
+            }
+            Message::ProfileOrganizationChanged(value) => {
+                state.profile_organization = value;
+                Task::none()
+            }
+            Message::ProfileBioChanged(value) => {
+                state.profile_bio = value;
+                Task::none()
+            }
+            Message::ProfileSaveChanges => {
+                if state.profile_name.trim().is_empty() || state.profile_email.trim().is_empty() {
+                    state.profile_status = Some("Имя и email не могут быть пустыми".to_string());
+                    return Task::none();
+                }
+                if !state.profile_email.contains('@') {
+                    state.profile_status = Some("Введите корректный email".to_string());
+                    return Task::none();
+                }
+                state.profile_status = Some("Изменения профиля сохранены".to_string());
+                Task::none()
+            }
         }
     }
 
@@ -506,8 +877,8 @@ impl App {
                     charts_view(self)
                 }
             }
-            SidebarItem::Table => section_placeholder_view(self, "Таблица"),
-            SidebarItem::Profile => section_placeholder_view(self, "Профиль"),
+            SidebarItem::Table => crate::ui::table_view(self),
+            SidebarItem::Profile => profile_view(self),
             SidebarItem::Settings => settings_view(self),
         }
     }

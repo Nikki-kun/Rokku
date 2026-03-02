@@ -117,9 +117,9 @@ pub fn parse_log(filename: &str) -> Result<ParsedLog> {
                     .get_definition(&message.type_id)
                     .ok_or_else(|| anyhow::anyhow!("Unknown type_id {}", message.type_id))?;
                 let fields = message.fields;
-                let field_indexes = series_idx_by_type
-                    .get(&message.type_id)
-                    .ok_or_else(|| anyhow::anyhow!("Missing series map for type_id {}", message.type_id))?;
+                let field_indexes = series_idx_by_type.get(&message.type_id).ok_or_else(|| {
+                    anyhow::anyhow!("Missing series map for type_id {}", message.type_id)
+                })?;
 
                 if definition.name.as_ref() == "PARM" {
                     let mut parm_name: Option<String> = None;

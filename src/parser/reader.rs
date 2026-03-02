@@ -165,7 +165,7 @@ impl ArduReader {
                 return Ok(ArduFrame::Eof)
             }
             Err(e) => {
-                eprintln!("Unexpected error, but likely EOF: {}", e);
+                log::warn!("Unexpected parser error (treated as EOF): {}", e);
                 return Ok(ArduFrame::Eof);
             }
         };
@@ -207,9 +207,10 @@ impl ArduReader {
             let buf = &mut self.msg_body_buf[..body_size];
             if let Err(e) = file.read_exact(buf) {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                    eprintln!(
-                        "\nWARNING: file is incomplete. Expected {} bytes for msg_id {} at EOF.",
-                        body_size, header.msg_id
+                    log::warn!(
+                        "File is incomplete: expected {} bytes for msg_id {} at EOF",
+                        body_size,
+                        header.msg_id
                     );
                     return Ok(ArduFrame::Eof);
                 }

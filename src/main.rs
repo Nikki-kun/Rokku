@@ -8,6 +8,7 @@ mod chart;
 mod config;
 mod data;
 mod parser;
+mod table;
 mod ui;
 
 fn main() -> iced::Result {
