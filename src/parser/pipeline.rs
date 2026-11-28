@@ -4,8 +4,8 @@ use anyhow::Result;
 
 use crate::data::{is_timestamp_field, LogInfoEntry, LogInfoKind, ParamGroup, ParsedLog};
 
-use super::reader::{ArduFrame, ArduReader, LogValue};
 use super::ulog;
+use flightlog_core::{Log, ReadOptions};
 
 fn is_ulog_file(filename: &str) -> bool {
     std::path::Path::new(filename)
@@ -70,90 +70,73 @@ fn finish_parsed_log(
     }
 }
 
-fn log_value_to_text(value: &LogValue) -> String {
-    match value {
-        LogValue::Int(v) => v.to_string(),
-        LogValue::UInt(v) => v.to_string(),
-        LogValue::Float(v) => format!("{:.6}", v),
-        LogValue::Double(v) => format!("{:.6}", v),
-        LogValue::Str(v) => v.clone(),
-    }
-}
-
 pub fn parse_log(filename: &str) -> Result<ParsedLog> {
     if is_ulog_file(filename) {
         return ulog::parse_ulog_columnar(filename);
     }
     log::debug!("Parsing ArduPilot log: {}", filename);
-    let mut reader = ArduReader::new(filename);
+    let bytes = std::fs::read(filename)?;
+    let log = Log::read(
+        &bytes,
+        &ReadOptions {
+            keep_order: true,
+            ..ReadOptions::default()
+        },
+    )?;
     let mut series_names: Vec<String> = Vec::new();
     let mut series_values: Vec<Vec<(u64, f64)>> = Vec::new();
-    let mut series_idx_by_type: HashMap<u8, Vec<Option<usize>>> = HashMap::new();
-    let mut discovered_types: BTreeSet<String> = BTreeSet::new();
-    let mut parm_values: BTreeMap<String, String> = BTreeMap::new();
+    let mut series_idx_by_table: Vec<Vec<Option<usize>>> = Vec::new();
+    let discovered_types: BTreeSet<String> = log.counts.keys().cloned().collect();
     let mut total_points = 0usize;
 
-    loop {
-        match reader.read()? {
-            ArduFrame::Eof => break,
-            ArduFrame::ArduDefinition(definition) => {
-                discovered_types.insert(definition.name.to_string());
-                let mut field_indexes = Vec::with_capacity(definition.labels.len());
-                for label in &definition.labels {
-                    if is_timestamp_field(label.as_ref()) {
-                        field_indexes.push(None);
-                        continue;
-                    }
-                    let key = format!("{}.{}", definition.name, label);
-                    let idx = series_names.len();
-                    series_names.push(key);
-                    series_values.push(Vec::new());
-                    field_indexes.push(Some(idx));
-                }
-                series_idx_by_type.insert(definition.ardu_fmt.type_id, field_indexes);
+    for table in log.tables() {
+        let mut field_indexes = Vec::with_capacity(table.columns.len());
+        for column in &table.columns {
+            if is_timestamp_field(&column.name) {
+                field_indexes.push(None);
+                continue;
             }
-            ArduFrame::ArduMessage(message) => {
-                let definition = reader
-                    .get_definition(&message.type_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown type_id {}", message.type_id))?;
-                let fields = message.fields;
-                let field_indexes = series_idx_by_type.get(&message.type_id).ok_or_else(|| {
-                    anyhow::anyhow!("Missing series map for type_id {}", message.type_id)
-                })?;
+            let idx = series_names.len();
+            series_names.push(format!("{}.{}", table.name, column.name));
+            series_values.push(Vec::new());
+            field_indexes.push(Some(idx));
+        }
+        series_idx_by_table.push(field_indexes);
+    }
 
-                if definition.name.as_ref() == "PARM" {
-                    let mut parm_name: Option<String> = None;
-                    let mut parm_value: Option<String> = None;
-
-                    for (field_idx, val) in &fields {
-                        let label = definition.labels[*field_idx].as_ref();
-                        if label == "Name" {
-                            if let LogValue::Str(v) = val {
-                                if !v.is_empty() {
-                                    parm_name = Some(v.clone());
-                                }
-                            }
-                        } else if label == "Value" {
-                            parm_value = Some(log_value_to_text(val));
-                        }
-                    }
-
-                    if let (Some(name), Some(value)) = (parm_name, parm_value) {
-                        parm_values.insert(name, value);
-                    }
-                }
-
-                for (field_idx, val) in fields {
-                    if let Some(v) = val.to_f64() {
-                        if let Some(Some(series_idx)) = field_indexes.get(field_idx) {
-                            series_values[*series_idx].push((message.current_ts, v));
-                            total_points += 1;
-                        }
-                    }
+    let mut last_timestamp = 0u64;
+    for &(t, row) in log.order.as_deref().unwrap_or_default() {
+        let (table, row) = (&log.tables()[t as usize], row as usize);
+        let current_ts = match table.column("TimeUS").and_then(|c| c.data.get_f64(row)) {
+            Some(us) if us > 0.0 => {
+                last_timestamp = us as u64 * 1000;
+                last_timestamp
+            }
+            _ => last_timestamp,
+        };
+        for (column, idx) in table.columns.iter().zip(&series_idx_by_table[t as usize]) {
+            if let (Some(idx), Some(v)) = (idx, column.data.get_f64(row)) {
+                if v.is_finite() {
+                    series_values[*idx].push((current_ts, v));
+                    total_points += 1;
                 }
             }
         }
     }
+
+    if !log.integrity.is_clean() {
+        log::warn!(
+            "{}: skipped {} damaged bytes in {} regions",
+            filename,
+            log.integrity.skipped_bytes,
+            log.integrity.skipped_region_count
+        );
+    }
+    let parm_values: BTreeMap<String, String> = log
+        .params
+        .iter()
+        .map(|(k, v)| (k.clone(), format!("{:.6}", v)))
+        .collect();
 
     log::debug!(
         "Parsed {} data points into {} series",
@@ -198,5 +181,43 @@ mod tests {
     fn test_parse_log_nonexistent() {
         let result = parse_log("/nonexistent/path/log.bin");
         assert!(result.is_err());
+    }
+
+    fn fmt(type_id: u8, len: u8, name: &str, format: &str, labels: &str) -> Vec<u8> {
+        let mut m = vec![0xA3, 0x95, 0x80, type_id, len];
+        for (text, width) in [(name, 4), (format, 16), (labels, 64)] {
+            let mut field = text.as_bytes().to_vec();
+            field.resize(width, 0);
+            m.extend(field);
+        }
+        m
+    }
+
+    fn gps(time_us: u64, lat: i32, alt_cm: i16) -> Vec<u8> {
+        let mut m = vec![0xA3, 0x95, 200];
+        m.extend(time_us.to_le_bytes());
+        m.extend(lat.to_le_bytes());
+        m.extend(alt_cm.to_le_bytes());
+        m
+    }
+
+    #[test]
+    fn test_dataflash_scaled_and_reads_past_damage() {
+        let mut bytes = fmt(0x80, 89, "FMT", "BBnNZ", "Type,Length,Name,Format,Columns");
+        bytes.extend(fmt(200, 17, "GPS", "QLc", "TimeUS,Lat,Alt"));
+        bytes.extend(gps(1_000_000, 407_127_760, 1234));
+        bytes.extend([0x00, 0xFF, 0x13]);
+        bytes.extend(gps(2_000_000, 407_127_770, 1240));
+
+        let path = std::env::temp_dir().join("rokku_dataflash_test.bin");
+        std::fs::write(&path, &bytes).unwrap();
+        let parsed = parse_log(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let lat = &parsed.series["GPS.Lat"];
+        assert_eq!(lat.len(), 2);
+        assert!((lat[0].1 - 40.712776).abs() < 1e-9);
+        assert_eq!(lat[1].0, 2_000_000_000);
+        assert!((parsed.series["GPS.Alt"][1].1 - 12.40).abs() < 1e-9);
     }
 }
